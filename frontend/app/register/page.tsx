@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
 
+import { signInWithPopup } from "firebase/auth";
+import { auth, provider } from "@/lib/firebase";
+
 export default function RegisterPage() {
   const router = useRouter();
 
@@ -31,7 +34,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const res = await axios.post("http://localhost:8080/register", {
+      await axios.post("http://localhost:8080/register", {
         name,
         email,
         password,
@@ -44,6 +47,45 @@ export default function RegisterPage() {
       }, 800);
     } catch (err) {
       let message = "Server error. Try again.";
+      if (axios.isAxiosError(err)) {
+        message = err.response?.data?.message || message;
+      }
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleRegister = async () => {
+    try {
+      setLoading(true);
+
+      const result = await signInWithPopup(auth, provider);
+      const firebaseUser = result.user;
+      const idToken = await firebaseUser.getIdToken();
+
+      // /auth/google on your backend auto-registers if user doesn't exist
+      const res = await axios.post("http://localhost:8080/auth/google", {
+        token: idToken,
+      });
+
+      const user = res.data.user;
+
+      localStorage.setItem("token", res.data.token);
+      localStorage.setItem("user", JSON.stringify(user));
+
+      toast.success("Akaun Google berjaya dibuat!");
+
+      setTimeout(() => {
+        if (user.role === "admin") {
+          router.push("/dashboard");
+        } else {
+          router.push("/home");
+        }
+      }, 500);
+    } catch (err) {
+      console.error(err);
+      let message = "Google sign-up failed";
       if (axios.isAxiosError(err)) {
         message = err.response?.data?.message || message;
       }
@@ -87,7 +129,6 @@ export default function RegisterPage() {
           padding: 24px;
         }
 
-        /* ---- page bg dots ---- */
         body::before {
           content: '';
           position: fixed;
@@ -98,7 +139,6 @@ export default function RegisterPage() {
           z-index: 0;
         }
 
-        /* ---- floating blobs ---- */
         body::after {
           content: '';
           position: fixed;
@@ -120,7 +160,6 @@ export default function RegisterPage() {
           z-index: 0;
         }
 
-        /* ---- card ---- */
         .card {
           position: relative;
           z-index: 1;
@@ -139,7 +178,6 @@ export default function RegisterPage() {
           to   { opacity: 1; transform: translateY(0)   scale(1); }
         }
 
-        /* ---- illustration ---- */
         .illustration-wrap {
           display: flex;
           justify-content: center;
@@ -147,7 +185,6 @@ export default function RegisterPage() {
           animation: fadeUp 0.5s 0.1s both;
         }
 
-        /* ---- heading ---- */
         .greeting {
           font-family: 'Fraunces', serif;
           font-size: 1.9rem;
@@ -179,7 +216,6 @@ export default function RegisterPage() {
           animation: fadeUp 0.5s 0.3s both;
         }
 
-        /* ---- form ---- */
         form {
           display: flex;
           flex-direction: column;
@@ -224,7 +260,6 @@ export default function RegisterPage() {
           box-shadow: 0 0 0 3px #bfdbfe66;
         }
 
-        /* password toggle */
         .pw-toggle {
           position: absolute;
           right: 12px;
@@ -240,9 +275,31 @@ export default function RegisterPage() {
         }
         .pw-toggle:hover { color: var(--accent); }
 
+        /* ---- OR divider ---- */
+        .or-divider {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 2px 0;
+          animation: fadeUp 0.5s 0.48s both;
+        }
+        .or-divider::before,
+        .or-divider::after {
+          content: '';
+          flex: 1;
+          height: 1px;
+          background: var(--card-border);
+        }
+        .or-divider span {
+          font-size: 0.72rem;
+          font-weight: 600;
+          color: var(--text-muted);
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+        }
+
         /* ---- submit button ---- */
         .btn-submit {
-          margin-top: 4px;
           width: 100%;
           padding: 13px;
           background: linear-gradient(135deg, #3b82f6, #1d4ed8);
@@ -256,7 +313,11 @@ export default function RegisterPage() {
           cursor: pointer;
           box-shadow: var(--shadow-btn);
           transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
-          animation: fadeUp 0.5s 0.52s both;
+          animation: fadeUp 0.5s 0.51s both;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
         }
         .btn-submit:hover:not(:disabled) {
           opacity: 0.92;
@@ -266,13 +327,33 @@ export default function RegisterPage() {
         .btn-submit:active:not(:disabled) { transform: translateY(0); }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; }
 
-        /* loading spinner inside button */
-        .btn-inner {
+        /* ---- Google button ---- */
+        .btn-google {
+          width: 100%;
+          padding: 12px;
+          background: transparent;
+          color: var(--accent);
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          font-size: 0.88rem;
+          font-weight: 600;
+          border: 1.5px solid #93c4e8;
+          border-radius: 12px;
+          cursor: pointer;
+          letter-spacing: 0.02em;
+          transition: background 0.2s, border-color 0.2s, transform 0.15s;
+          animation: fadeUp 0.5s 0.54s both;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 8px;
+          gap: 10px;
         }
+        .btn-google:hover:not(:disabled) {
+          background: #dbeeff;
+          border-color: #3b9ade;
+          transform: translateY(-1px);
+        }
+        .btn-google:disabled { opacity: 0.6; cursor: not-allowed; }
+
         .spinner {
           width: 15px; height: 15px;
           border: 2px solid #ffffff55;
@@ -282,7 +363,6 @@ export default function RegisterPage() {
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ---- footer link ---- */
         .footer-link {
           margin-top: 20px;
           text-align: center;
@@ -294,7 +374,9 @@ export default function RegisterPage() {
           margin-bottom: 10px;
         }
         .btn-outline {
-          display: block;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           width: 100%;
           padding: 11px;
           background: transparent;
@@ -315,7 +397,6 @@ export default function RegisterPage() {
           transform: translateY(-1px);
         }
 
-        /* ---- step badge ---- */
         .step-badge {
           display: inline-flex;
           align-items: center;
@@ -357,19 +438,14 @@ export default function RegisterPage() {
         {/* Illustration */}
         <div className="illustration-wrap">
           <svg width="88" height="88" viewBox="0 0 88 88" fill="none" xmlns="http://www.w3.org/2000/svg">
-            {/* outer circle bg */}
             <circle cx="44" cy="44" r="44" fill="#dbeeff"/>
-            {/* paper / form shape */}
             <rect x="22" y="18" width="44" height="54" rx="6" fill="#bfdbfe" stroke="#93c5fd" strokeWidth="1.5"/>
-            {/* lines on paper */}
             <rect x="29" y="28" width="18" height="3" rx="1.5" fill="#60a5fa"/>
             <rect x="29" y="34" width="30" height="2" rx="1" fill="#93c5fd"/>
             <rect x="29" y="39" width="26" height="2" rx="1" fill="#93c5fd"/>
             <rect x="29" y="44" width="30" height="2" rx="1" fill="#93c5fd"/>
-            {/* checkmark circle */}
             <circle cx="55" cy="60" r="11" fill="#3b82f6"/>
             <polyline points="50,60 54,64 61,56" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-            {/* top clip */}
             <rect x="36" y="14" width="16" height="8" rx="4" fill="#60a5fa" stroke="#bfdbfe" strokeWidth="1.5"/>
           </svg>
         </div>
@@ -398,6 +474,7 @@ export default function RegisterPage() {
               placeholder="Nama penuh"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              autoComplete="name"
             />
           </div>
 
@@ -414,6 +491,7 @@ export default function RegisterPage() {
               placeholder="Alamat e-mel"
               value={email}
               onChange={(e) => setEmail(e.target.value.trim())}
+              autoComplete="email"
             />
           </div>
 
@@ -430,6 +508,7 @@ export default function RegisterPage() {
               placeholder="Kata laluan (min. 6 aksara)"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
               style={{ paddingRight: "42px" }}
             />
             <button
@@ -455,11 +534,45 @@ export default function RegisterPage() {
 
           {/* Submit */}
           <button type="submit" className="btn-submit" disabled={loading}>
-            <span className="btn-inner">
-              {loading && <span className="spinner" />}
-              {loading ? "Sedang mendaftar..." : "Daftar Sekarang"}
-            </span>
+            {loading ? (
+              <>
+                <span className="spinner" />
+                <span>Sedang mendaftar...</span>
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <line x1="19" y1="8" x2="19" y2="14"/>
+                  <line x1="22" y1="11" x2="16" y2="11"/>
+                </svg>
+                <span>Daftar Sekarang</span>
+              </>
+            )}
           </button>
+
+          {/* OR divider */}
+          <div className="or-divider">
+            <span>atau</span>
+          </div>
+
+          {/* Google Sign-Up */}
+          <button
+            type="button"
+            className="btn-google"
+            onClick={handleGoogleRegister}
+            disabled={loading}
+          >
+            <svg width="18" height="18" viewBox="0 0 48 48">
+              <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z"/>
+              <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15 18.9 12 24 12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.6 8.3 6.3 14.7z"/>
+              <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.5-5.3l-6.2-5.2C29.3 35 26.8 36 24 36c-5.2 0-9.6-3.3-11.2-8l-6.5 5C9.5 39.5 16.2 44 24 44z"/>
+              <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1 2.8-3 5.1-5.8 6.5l6.2 5.2C39.8 35.9 44 30.6 44 24c0-1.3-.1-2.3-.4-3.5z"/>
+            </svg>
+            Daftar Dengan Google
+          </button>
+
         </form>
 
         {/* Footer */}
