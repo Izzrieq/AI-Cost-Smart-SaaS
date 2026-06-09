@@ -11,12 +11,20 @@ const PORT = process.env.PORT || 8080;
 const app = express();
 
 app.use(express.json());
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://ai-cost-smart-saas-frontend.onrender.com",
+];
+
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "https://ai-cost-smart-saas.onrender.com",
-    ],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   }),
 );
