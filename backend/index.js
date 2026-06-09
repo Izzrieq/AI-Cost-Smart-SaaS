@@ -925,6 +925,9 @@ app.delete(
     }
   },
 );
+app.get("/", (req, res) => {
+  res.send("Database connected and server is running!");
+});
 
 // ----------------------
 app.listen(PORT, "0.0.0.0", () => {
