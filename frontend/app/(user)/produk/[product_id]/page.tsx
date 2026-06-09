@@ -1,9 +1,9 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { matchFoodImage } from "@/lib/foodImages";
+import { API_URL } from "@/lib/api";
 
 interface Product {
   product_id: string;
@@ -176,9 +176,9 @@ export default function ProductDetailPage() {
     const fetchAll = async () => {
       try {
         const [prodRes, costsRes, prodsRes] = await Promise.all([
-          fetch(`http://localhost:8080/products/${product_id}`,             { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`http://localhost:8080/products/${product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`http://localhost:8080/products/${product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/${product_id}`,             { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/${product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/${product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         const [pd, cd, prd] = await Promise.all([prodRes.json(), costsRes.json(), prodsRes.json()]);
         setProduct(pd.product);
@@ -221,7 +221,7 @@ export default function ProductDetailPage() {
     if (!confirm("Padam produk ini?")) return;
     setDeleting(true);
     try {
-      await fetch(`http://localhost:8080/products/${product_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      await fetch(`${API_URL}/products/${product_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       router.push("/produk");
     } catch { console.error("Delete error"); } finally { setDeleting(false); }
   };
@@ -230,7 +230,7 @@ export default function ProductDetailPage() {
     if (!prodForm.name || !prodForm.quantity || !prodForm.total_cost || !prodForm.units_produced) return;
     setAddingProd(true);
     try {
-      const res = await fetch(`http://localhost:8080/products/${product_id}/productions`, {
+      const res = await fetch(`${API_URL}/products/${product_id}/productions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -251,7 +251,7 @@ export default function ProductDetailPage() {
     if (!costForm.name || !costForm.cost_per_unit || !costForm.total_cost) return;
     setAddingCost(true);
     try {
-      const res = await fetch(`http://localhost:8080/products/${product_id}/costs`, {
+      const res = await fetch(`${API_URL}/products/${product_id}/costs`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: costForm.name, type, behavior: costForm.behavior, cost_per_unit: parseFloat(costForm.cost_per_unit), total_cost: parseFloat(costForm.total_cost) }),
@@ -270,7 +270,7 @@ export default function ProductDetailPage() {
       if (!prod) return;
       const newTotal = (newQty * parseFloat(String(prod.cost_per_unit))).toFixed(2);
       setProductions(prev => prev.map(p => p.production_id === production_id ? { ...p, quantity: newQty, total_cost: parseFloat(newTotal) } : p));
-      await fetch(`http://localhost:8080/productions/${production_id}`, {
+      await fetch(`${API_URL}/productions/${production_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: prod.name, quantity: newQty, unit: prod.unit, cost_per_unit: prod.cost_per_unit, total_cost: parseFloat(newTotal), units_produced: prod.units_produced, batch_date: prod.batch_date }),
@@ -292,7 +292,7 @@ export default function ProductDetailPage() {
     if (!selectedProduction) return;
     setSavingEdit(true);
     try {
-      const res = await fetch(`http://localhost:8080/productions/${selectedProduction.production_id}`, {
+      const res = await fetch(`${API_URL}/productions/${selectedProduction.production_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: editProdForm.name, quantity: parseFloat(editProdForm.quantity), unit: editProdForm.unit, cost_per_unit: parseFloat(editProdForm.cost_per_unit), total_cost: parseFloat(editProdForm.total_cost), units_produced: parseInt(editProdForm.units_produced), batch_date: editProdForm.batch_date }),
@@ -307,7 +307,7 @@ export default function ProductDetailPage() {
     if (!selectedProduction) return;
     setDeletingItem(true);
     try {
-      await fetch(`http://localhost:8080/productions/${selectedProduction.production_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      await fetch(`${API_URL}/productions/${selectedProduction.production_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       setProductions(prev => prev.filter(p => p.production_id !== selectedProduction.production_id));
       setSelectedProduction(null);
     } catch { console.error("Delete production error"); } finally { setDeletingItem(false); }
@@ -317,7 +317,7 @@ export default function ProductDetailPage() {
     if (!selectedCost) return;
     setSavingEdit(true);
     try {
-      const res = await fetch(`http://localhost:8080/costs/${selectedCost.costs_id}`, {
+      const res = await fetch(`${API_URL}/costs/${selectedCost.costs_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: editCostForm.name, behavior: editCostForm.behavior, cost_per_unit: parseFloat(editCostForm.cost_per_unit), total_cost: parseFloat(editCostForm.total_cost) }),
@@ -332,7 +332,7 @@ export default function ProductDetailPage() {
     if (!selectedCost) return;
     setDeletingItem(true);
     try {
-      await fetch(`http://localhost:8080/costs/${selectedCost.costs_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      await fetch(`${API_URL}/costs/${selectedCost.costs_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       setCosts(prev => prev.filter(c => c.costs_id !== selectedCost.costs_id));
       setSelectedCost(null);
     } catch { console.error("Delete cost error"); } finally { setDeletingItem(false); }

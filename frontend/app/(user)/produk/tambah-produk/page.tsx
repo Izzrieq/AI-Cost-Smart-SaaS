@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { API_URL } from "@/lib/api";
 import { matchFoodImage } from "@/lib/foodImages";
 
 export default function TambahProdukPage() {
@@ -41,7 +42,7 @@ export default function TambahProdukPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:8080/products", {
+      const res = await fetch(`${API_URL}/products`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

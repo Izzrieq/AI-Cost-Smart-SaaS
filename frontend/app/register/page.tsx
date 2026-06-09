@@ -5,6 +5,7 @@ import axios from "axios";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
+import { API_URL } from "@/lib/api";
 
 import { signInWithPopup } from "firebase/auth";
 import { auth, provider } from "@/lib/firebase";
@@ -34,7 +35,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await axios.post("http://localhost:8080/register", {
+      await axios.post(`${API_URL}/register`, {
         name,
         email,
         password,
@@ -65,7 +66,7 @@ export default function RegisterPage() {
       const idToken = await firebaseUser.getIdToken();
 
       // /auth/google on your backend auto-registers if user doesn't exist
-      const res = await axios.post("http://localhost:8080/auth/google", {
+      const res = await axios.post(`${API_URL}/auth/google`, {
         token: idToken,
       });
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import BottomNavbar from "@/app/(user)/components/BottomNavbar";
+import { API_URL } from "@/lib/api";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@ export default function AnalisisPage() {
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        const prodRes  = await fetch("http://localhost:8080/products", { headers: { Authorization: `Bearer ${token}` } });
+        const prodRes  = await fetch(`${API_URL}/products`, { headers: { Authorization: `Bearer ${token}` } });
         const prodData = await prodRes.json();
         const prods: Product[] = prodData.products || [];
 
@@ -158,8 +159,8 @@ export default function AnalisisPage() {
         const cvpArr: ProductCVP[] = await Promise.all(
           prods.map(async (p) => {
             const [costsRes, prodsRes] = await Promise.all([
-              fetch(`http://localhost:8080/products/${p.product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
-              fetch(`http://localhost:8080/products/${p.product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
+              fetch(`${API_URL}/products/${p.product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
+              fetch(`${API_URL}/products/${p.product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
             ]);
             const costsData = await costsRes.json();
             const prodsData = await prodsRes.json();

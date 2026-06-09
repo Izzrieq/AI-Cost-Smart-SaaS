@@ -5,6 +5,7 @@ import axios from "axios";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
+import { API_URL } from "@/lib/api";
 
 import { signInWithPopup } from "firebase/auth";
 import { auth, provider } from "@/lib/firebase";
@@ -31,7 +32,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await axios.post("http://localhost:8080/login", {
+      const res = await axios.post(`${API_URL}/login`, {
         email,
         password,
       });
@@ -80,7 +81,7 @@ export default function LoginPage() {
       await firebaseUser.getIdToken();
 
     const res = await axios.post(
-      "http://localhost:8080/auth/google",
+      `${API_URL}/auth/google`,
       {
         token: idToken,
       }

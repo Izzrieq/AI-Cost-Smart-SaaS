@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { API_URL } from "@/lib/api";
 
 const businessTypes = [
   { value: "home", label: "Perniagaan Rumah", icon: "🏠", desc: "Beroperasi dari rumah" },
@@ -25,7 +26,7 @@ export default function DaftarPerniagaanPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:8080/business", {
+      const res = await fetch(`${API_URL}/business`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -53,7 +54,7 @@ export default function DaftarPerniagaanPage() {
     <div className="min-h-screen bg-[#f0f4f8] font-sans">
 
       {/* Header */}
-      <div className="bg-white border-b border-gray-100 px-5 pt-12 pb-5">
+      <div className="px-5 pt-12 pb-5 bg-white border-b border-gray-100">
         <button
           onClick={() => router.back()}
           className="flex items-center gap-1.5 text-sm text-gray-500 mb-4"
@@ -64,14 +65,14 @@ export default function DaftarPerniagaanPage() {
           Kembali
         </button>
         <h1 className="text-xl font-semibold text-gray-900">Daftar Perniagaan</h1>
-        <p className="text-sm text-gray-500 mt-1">Lengkapkan maklumat perniagaan anda</p>
+        <p className="mt-1 text-sm text-gray-500">Lengkapkan maklumat perniagaan anda</p>
       </div>
 
-      <div className="px-4 py-6 space-y-5 max-w-lg mx-auto">
+      <div className="max-w-lg px-4 py-6 mx-auto space-y-5">
 
         {/* Nama Perniagaan */}
-        <div className="bg-white rounded-2xl border border-gray-100 px-4 py-4">
-          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 block">
+        <div className="px-4 py-4 bg-white border border-gray-100 rounded-2xl">
+          <label className="block mb-2 text-xs font-medium tracking-wide text-gray-500 uppercase">
             Nama Perniagaan
           </label>
           <input
@@ -79,13 +80,13 @@ export default function DaftarPerniagaanPage() {
             placeholder="cth: Kuih Mak Teh"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
-            className="w-full text-sm text-gray-900 placeholder-gray-300 outline-none bg-transparent"
+            className="w-full text-sm text-gray-900 placeholder-gray-300 bg-transparent outline-none"
           />
         </div>
 
         {/* Penerangan */}
-        <div className="bg-white rounded-2xl border border-gray-100 px-4 py-4">
-          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 block">
+        <div className="px-4 py-4 bg-white border border-gray-100 rounded-2xl">
+          <label className="block mb-2 text-xs font-medium tracking-wide text-gray-500 uppercase">
             Penerangan Perniagaan
           </label>
           <textarea
@@ -93,13 +94,13 @@ export default function DaftarPerniagaanPage() {
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
             rows={3}
-            className="w-full text-sm text-gray-900 placeholder-gray-300 outline-none bg-transparent resize-none"
+            className="w-full text-sm text-gray-900 placeholder-gray-300 bg-transparent outline-none resize-none"
           />
         </div>
 
         {/* Jenis Perniagaan */}
         <div>
-          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 block px-1">
+          <label className="block px-1 mb-2 text-xs font-medium tracking-wide text-gray-500 uppercase">
             Jenis Perniagaan
           </label>
           <div className="grid grid-cols-2 gap-3">
@@ -115,7 +116,7 @@ export default function DaftarPerniagaanPage() {
                       : "border-gray-100 bg-white"
                   }`}
                 >
-                  <div className="text-2xl mb-2">{type.icon}</div>
+                  <div className="mb-2 text-2xl">{type.icon}</div>
                   <div className={`text-sm font-semibold mb-0.5 ${selected ? "text-[#2563eb]" : "text-gray-900"}`}>
                     {type.label}
                   </div>
@@ -128,7 +129,7 @@ export default function DaftarPerniagaanPage() {
 
         {/* Error */}
         {error && (
-          <div className="bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-sm text-red-500">
+          <div className="px-4 py-3 text-sm text-red-500 border border-red-100 bg-red-50 rounded-2xl">
             {error}
           </div>
         )}

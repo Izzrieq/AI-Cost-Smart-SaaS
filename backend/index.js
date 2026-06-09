@@ -6,11 +6,20 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const pool = require("./config/db");
 const admin = require("./config/firebaseAdmin");
+const PORT = process.env.PORT || 8080;
 
 const app = express();
 
 app.use(express.json());
-app.use(cors({ origin: "http://localhost:3000" }));
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://ai-cost-smart-saas.onrender.com",
+    ],
+    credentials: true,
+  }),
+);
 
 // ----------------------
 // AUTH MIDDLEWARE
@@ -605,11 +614,9 @@ app.post("/products/:product_id/costs", authenticateToken, async (req, res) => {
       total_cost == null ||
       isNaN(parseFloat(total_cost))
     )
-      return res
-        .status(400)
-        .json({
-          message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
-        });
+      return res.status(400).json({
+        message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
+      });
 
     if (!["tenaga", "indirect"].includes(type))
       return res.status(400).json({ message: "Jenis kos tidak sah." });
@@ -654,11 +661,9 @@ app.put("/costs/:costs_id", authenticateToken, async (req, res) => {
     const { name, behavior, cost_per_unit, total_cost } = req.body;
 
     if (isNaN(parseFloat(cost_per_unit)) || isNaN(parseFloat(total_cost)))
-      return res
-        .status(400)
-        .json({
-          message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
-        });
+      return res.status(400).json({
+        message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
+      });
 
     const result = await pool.query(
       `UPDATE costs SET name=$1, behavior=$2, cost_per_unit=$3, total_cost=$4
@@ -774,11 +779,9 @@ app.post(
         total_cost == null ||
         isNaN(parseFloat(total_cost))
       )
-        return res
-          .status(400)
-          .json({
-            message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
-          });
+        return res.status(400).json({
+          message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
+        });
 
       // FIX: validate units_produced
       const parsedUnits = parseInt(units_produced);
@@ -846,11 +849,9 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
         .json({ message: "Kuantiti mesti nombor positif." });
 
     if (isNaN(parseFloat(cost_per_unit)) || isNaN(parseFloat(total_cost)))
-      return res
-        .status(400)
-        .json({
-          message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
-        });
+      return res.status(400).json({
+        message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
+      });
 
     // FIX: validate units_produced
     const parsedUnits = parseInt(units_produced);
@@ -926,6 +927,6 @@ app.delete(
 );
 
 // ----------------------
-app.listen(8080, () => {
-  console.log("Server running on port 8080");
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
 });

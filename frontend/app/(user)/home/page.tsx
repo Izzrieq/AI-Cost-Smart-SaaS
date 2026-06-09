@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { API_URL } from "@/lib/api";
 import BottomNavbar from "@/app/(user)/components/BottomNavbar";
 import AIInsightCard from "@/app/(user)/components/AIInsightCard";
 import AIInsightCardSkeleton from "@/app/(user)/components/AIInsightCardSkeleton";
@@ -60,9 +61,9 @@ export default function HomePage() {
     const fetchData = async () => {
       try {
         const [userRes, businessRes, statsRes] = await Promise.all([
-          fetch("http://localhost:8080/me", { headers: { Authorization: `Bearer ${token}` } }),
-          fetch("http://localhost:8080/business", { headers: { Authorization: `Bearer ${token}` } }),
-          fetch("http://localhost:8080/home/stats", { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/me`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/business`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/home/stats`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
 
         if (!userRes.ok) {

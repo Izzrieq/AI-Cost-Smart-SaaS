@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import BottomNavbar from "@/app/(user)/components/BottomNavbar";
 import { matchFoodImage } from "@/lib/foodImages";
+import { API_URL } from "@/lib/api";
 
 interface Product {
   product_id: string;
@@ -55,7 +56,7 @@ export default function ProdukPage() {
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) { router.push("/login"); return; }
-    fetch("http://localhost:8080/products", {
+    fetch(`${API_URL}/products`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
