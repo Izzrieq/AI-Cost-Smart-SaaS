@@ -176,9 +176,9 @@ export default function ProductDetailPage() {
     const fetchAll = async () => {
       try {
         const [prodRes, costsRes, prodsRes] = await Promise.all([
-          fetch(`${API_URL}/${product_id}`,             { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${API_URL}/${product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${API_URL}/${product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/products/${product_id}`,             { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/products/${product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/products/${product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         const [pd, cd, prd] = await Promise.all([prodRes.json(), costsRes.json(), prodsRes.json()]);
         setProduct(pd.product);
