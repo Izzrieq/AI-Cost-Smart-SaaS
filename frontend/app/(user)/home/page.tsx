@@ -90,7 +90,6 @@ export default function HomePage() {
     fetchData();
   }, [router]);
 
-  const getTitle = () => (user ? (user.gender === "female" ? "Puan" : "Encik") : "");
   const getFirstName = () => (user ? user.name.split(" ")[0] : "");
   const formatRM = (val: number) =>
     `RM ${val.toLocaleString("ms-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -617,7 +616,7 @@ export default function HomePage() {
           {/* Greeting */}
           <div className="hp-greeting">
             <div className="hp-greeting-text">
-              <h2>Hi, {getTitle()} {getFirstName()}</h2>
+              <h2>Hi, {getFirstName()}</h2>
               <p>{quote}</p>
             </div>
             <div className="hp-logo">
