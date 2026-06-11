@@ -37,24 +37,23 @@ interface ProductCVP {
   tenaga_total: number;
   overhead_total: number;
   total_variable_cost: number;
-  total_fixed_cost: number;
-  total_batch_cost: number;
+  total_batch_cost: number;  // variable costs only (NO fixed costs here)
   units_produced: number;
 
   // Single Product CVP
   variable_cost_per_unit: number;
-  total_cost_per_unit: number;
+  total_cost_per_unit: number;  // variable + allocated fixed
   cm_per_unit: number;
-  cm_ratio: number;               // CM/unit ÷ SP × 100
-  net_profit_margin_pct: number;  // (SP − total_cost/unit) / SP × 100
-  bep_units_single: number;       // FC / CM per unit (single product)
-  min_selling_price: number;      // total_batch_cost / units_produced
-  net_profit_batch: number;       // CM/unit × units − FC
+  cm_ratio: number;
+  net_profit_margin_pct: number;
+  bep_units_single: number;
+  min_selling_price: number;    // variable_cost_per_unit only
+  net_profit_batch: number;
 
-  // Multiple Product CVP (filled after all products calculated)
-  sales_mix_pct: number;          // units / total_units × 100
-  weighted_cm: number;            // CM/unit × sales_mix%
-  bep_units_multi: number;        // BEP_total × sales_mix%
+  // Multiple Product CVP
+  sales_mix_pct: number;
+  weighted_cm: number;
+  bep_units_multi: number;
 }
 
 // ─── ICONS ───────────────────────────────────────────────────────────────────
@@ -71,7 +70,6 @@ const IconShield     = () => <svg width="13" height="13" viewBox="0 0 24 24" fil
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-// Net Profit Margin — header label (SME friendly)
 const getMarginMeta = (m: number) => {
   if (m >= 30) return { label: "Sihat",     bar: "#22c55e", text: "#15803d", bg: "#f0fdf4", dot: "#4ade80" };
   if (m >= 15) return { label: "Sederhana", bar: "#f59e0b", text: "#b45309", bg: "#fffbeb", dot: "#fbbf24" };
@@ -79,28 +77,10 @@ const getMarginMeta = (m: number) => {
 };
 
 // ─── MULTIPLE PRODUCT CVP CALCULATOR ─────────────────────────────────────────
-//
-//  For each product:
-//    Variable Cost/unit  = total_variable_cost / units_produced
-//    Total Cost/unit     = total_batch_cost / units_produced
-//    CM/unit             = selling_price − variable_cost/unit
-//    CM Ratio            = CM/unit / selling_price × 100
-//    Net Profit Margin % = (SP − total_cost/unit) / SP × 100   ← main display
-//    BEP single          = fixed_cost / CM/unit
-//    Min Selling Price   = total_batch_cost / units_produced
-//
-//  Across all products:
-//    total_units         = Σ units_produced
-//    Sales Mix %         = product_units / total_units × 100
-//    Weighted CM (WACM)  = Σ (CM/unit × sales_mix%)
-//    Total Fixed Cost    = Σ all fixed costs across all products
-//    BEP total units     = total_fixed_cost / WACM
-//    BEP per product     = BEP_total × sales_mix%
-
-const calcMultiCVP = (products: ProductCVP[]) => {
+// Fixed costs are SHARED across ALL products, not per product
+const calcMultiCVP = (products: ProductCVP[], totalFixedCost: number) => {
   const validProducts  = products.filter(p => p.units_produced > 0 && p.selling_price > 0);
   const total_units    = validProducts.reduce((s, p) => s + p.units_produced, 0);
-  const total_fc       = validProducts.reduce((s, p) => s + p.total_fixed_cost, 0);
   const total_vc       = validProducts.reduce((s, p) => s + p.total_variable_cost, 0);
   const total_revenue  = validProducts.reduce((s, p) => s + p.selling_price * p.units_produced, 0);
 
@@ -112,8 +92,8 @@ const calcMultiCVP = (products: ProductCVP[]) => {
       }, 0)
     : 0;
 
-  // BEP total units
-  const bep_total_units = wacm > 0 ? total_fc / wacm : Infinity;
+  // BEP total units (using SHARED fixed costs)
+  const bep_total_units = wacm > 0 ? totalFixedCost / wacm : Infinity;
   const bep_total_rm    = bep_total_units === Infinity ? Infinity : Math.ceil(bep_total_units) * (total_revenue / total_units);
 
   // Per-product BEP & sales mix
@@ -121,13 +101,27 @@ const calcMultiCVP = (products: ProductCVP[]) => {
     const sales_mix_pct   = total_units > 0 ? (p.units_produced / total_units) * 100 : 0;
     const weighted_cm     = p.cm_per_unit * (sales_mix_pct / 100);
     const bep_units_multi = bep_total_units === Infinity ? Infinity : bep_total_units * (sales_mix_pct / 100);
-    return { ...p, sales_mix_pct, weighted_cm, bep_units_multi };
+    // Recalculate net profit with shared fixed costs allocated by sales mix
+    const allocated_fixed = totalFixedCost * (sales_mix_pct / 100);
+    const net_profit_batch = p.cm_per_unit * p.units_produced - allocated_fixed;
+    const total_cost_per_unit = p.variable_cost_per_unit + (allocated_fixed / p.units_produced);
+    const net_profit_margin_pct = p.selling_price > 0 ? ((p.selling_price - total_cost_per_unit) / p.selling_price) * 100 : 0;
+    
+    return { 
+      ...p, 
+      sales_mix_pct, 
+      weighted_cm, 
+      bep_units_multi,
+      net_profit_batch,
+      total_cost_per_unit,
+      net_profit_margin_pct
+    };
   });
 
   return {
     enriched,
     total_units,
-    total_fc,
+    totalFixedCost,
     total_vc,
     total_revenue,
     wacm,
@@ -141,6 +135,7 @@ const calcMultiCVP = (products: ProductCVP[]) => {
 export default function AnalisisPage() {
   const router = useRouter();
   const [products, setProducts]       = useState<ProductCVP[]>([]);
+  const [totalFixedCost, setTotalFixedCost] = useState<number>(0);
   const [loading,  setLoading]        = useState(true);
   const [selected, setSelected]       = useState<string | null>(null);
 
@@ -150,79 +145,87 @@ export default function AnalisisPage() {
   useEffect(() => {
     const fetchAll = async () => {
       try {
+        // Fetch all products first
         const prodRes  = await fetch(`${API_URL}/products`, { headers: { Authorization: `Bearer ${token}` } });
         const prodData = await prodRes.json();
         const prods: Product[] = prodData.products || [];
 
         if (prods.length === 0) { setProducts([]); setLoading(false); return; }
 
-        const cvpArr: ProductCVP[] = await Promise.all(
-          prods.map(async (p) => {
-            const [costsRes, prodsRes] = await Promise.all([
-              fetch(`${API_URL}/products/${p.product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
-              fetch(`${API_URL}/products/${p.product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
-            ]);
-            const costsData = await costsRes.json();
-            const prodsData = await prodsRes.json();
-            const costs:       Cost[]       = costsData.costs       || [];
-            const productions: Production[] = prodsData.productions || [];
+        // STEP 1: Collect ALL fixed costs from ALL products (they should be shared)
+        let globalFixedCost = 0;
+        const productPromises = prods.map(async (p) => {
+          const [costsRes, prodsRes] = await Promise.all([
+            fetch(`${API_URL}/products/${p.product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
+            fetch(`${API_URL}/products/${p.product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
+          ]);
+          const costsData = await costsRes.json();
+          const prodsData = await prodsRes.json();
+          const costs:       Cost[]       = costsData.costs       || [];
+          const productions: Production[] = prodsData.productions || [];
 
-            // units_produced = max across all batches (most recent representative batch)
-            const units_produced = productions.length > 0
-              ? Math.max(...productions.map(pr => Number(pr.units_produced) || 0).filter(n => n > 0), 0) || 1
-              : 1;
+          // Collect fixed costs from this product to add to global total
+          const fixedFromProduct = costs.filter(c => c.behavior === "fixed")
+            .reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+          globalFixedCost += fixedFromProduct;
 
-            // Bahan = always variable
-            const bahan_total = productions.reduce((s, pr) => s + parseFloat(String(pr.total_cost ?? 0)), 0);
+          return { p, costs, productions };
+        });
 
-            const tenaga_total   = costs.filter(c => c.type === "tenaga").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-            const overhead_total = costs.filter(c => c.type === "indirect").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+        const productData = await Promise.all(productPromises);
+        
+        // STEP 2: Now calculate each product's VARIABLE costs only
+        const cvpArr: ProductCVP[] = productData.map(({ p, costs, productions }) => {
+          const units_produced = productions.length > 0
+            ? Math.max(...productions.map(pr => Number(pr.units_produced) || 0).filter(n => n > 0), 0) || 1
+            : 1;
 
-            const variable_costs = costs.filter(c => c.behavior === "variable");
-            const fixed_costs    = costs.filter(c => c.behavior === "fixed");
+          // Bahan = always variable
+          const bahan_total = productions.reduce((s, pr) => s + parseFloat(String(pr.total_cost ?? 0)), 0);
 
-            const total_variable_other = variable_costs.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-            const total_fixed_cost     = fixed_costs.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-            const total_variable_cost  = bahan_total + total_variable_other;
-            const total_batch_cost     = total_variable_cost + total_fixed_cost;
+          const tenaga_total   = costs.filter(c => c.type === "tenaga" && c.behavior === "variable").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+          const overhead_total = costs.filter(c => c.type === "indirect" && c.behavior === "variable").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
 
-            const sp                   = parseFloat(String(p.selling_price));
-            const variable_cost_per_unit = units_produced > 0 ? total_variable_cost / units_produced : 0;
-            const total_cost_per_unit    = units_produced > 0 ? total_batch_cost     / units_produced : 0;
-            const cm_per_unit            = sp - variable_cost_per_unit;
-            const cm_ratio               = sp > 0 ? (cm_per_unit / sp) * 100 : 0;
-            const net_profit_margin_pct  = sp > 0 ? ((sp - total_cost_per_unit) / sp) * 100 : 0;
-            const bep_units_single       = cm_per_unit > 0 ? total_fixed_cost / cm_per_unit : Infinity;
-            const min_selling_price      = units_produced > 0 ? total_batch_cost / units_produced : 0;
-            const net_profit_batch       = (cm_per_unit * units_produced) - total_fixed_cost;
+          // Only VARIABLE costs for this product
+          const total_variable_cost = bahan_total + tenaga_total + overhead_total;
+          const total_batch_cost = total_variable_cost;  // Fixed costs are separate!
 
-            return {
-              product_id: p.product_id,
-              name: p.name,
-              selling_price: sp,
-              bahan_total,
-              tenaga_total,
-              overhead_total,
-              total_variable_cost,
-              total_fixed_cost,
-              total_batch_cost,
-              units_produced,
-              variable_cost_per_unit,
-              total_cost_per_unit,
-              cm_per_unit,
-              cm_ratio,
-              net_profit_margin_pct,
-              bep_units_single,
-              min_selling_price,
-              net_profit_batch,
-              // multi-product fields filled later
-              sales_mix_pct:   0,
-              weighted_cm:     0,
-              bep_units_multi: 0,
-            };
-          })
-        );
+          const sp                   = parseFloat(String(p.selling_price));
+          const variable_cost_per_unit = units_produced > 0 ? total_variable_cost / units_produced : 0;
+          const cm_per_unit            = sp - variable_cost_per_unit;
+          const cm_ratio               = sp > 0 ? (cm_per_unit / sp) * 100 : 0;
+          const min_selling_price      = variable_cost_per_unit;  // Minimum to cover variable costs
+          
+          // Initial net profit margin (without fixed costs - will be recalculated later)
+          const net_profit_margin_pct = 0;
+          const net_profit_batch = 0;
+          const total_cost_per_unit = variable_cost_per_unit;
 
+          return {
+            product_id: p.product_id,
+            name: p.name,
+            selling_price: sp,
+            bahan_total,
+            tenaga_total,
+            overhead_total,
+            total_variable_cost,
+            total_batch_cost,
+            units_produced,
+            variable_cost_per_unit,
+            total_cost_per_unit,
+            cm_per_unit,
+            cm_ratio,
+            net_profit_margin_pct,
+            bep_units_single: 0,  // Will be calculated in multi CVP
+            min_selling_price,
+            net_profit_batch,
+            sales_mix_pct:   0,
+            weighted_cm:     0,
+            bep_units_multi: 0,
+          };
+        });
+
+        setTotalFixedCost(globalFixedCost);
         setProducts(cvpArr);
         if (cvpArr.length > 0) setSelected(cvpArr[0].product_id);
       } catch (err) {
@@ -234,13 +237,13 @@ export default function AnalisisPage() {
     fetchAll();
   }, []);
 
-  // ── MULTI-PRODUCT CVP ─────────────────────────────────────────────────────
-  const multi    = calcMultiCVP(products);
+  // ── MULTI-PRODUCT CVP (with shared fixed costs) ──────────────────────────
+  const multi    = calcMultiCVP(products, totalFixedCost);
   const enriched = multi.enriched;
 
   const selectedProduct = enriched.find(p => p.product_id === selected) ?? null;
 
-  // Summary counts using Net Profit Margin (not stored margin_percentage)
+  // Summary counts using Net Profit Margin
   const sihatCount     = enriched.filter(p => p.net_profit_margin_pct >= 30).length;
   const sederhanaCount = enriched.filter(p => p.net_profit_margin_pct >= 15 && p.net_profit_margin_pct < 30).length;
   const rendahCount    = enriched.filter(p => p.net_profit_margin_pct < 15).length;
@@ -283,6 +286,7 @@ export default function AnalisisPage() {
   return (
     <>
       <style>{`
+        /* Keep all your existing styles */
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         .an-root { min-height:100vh; background:#f5f7fa; font-family:'Plus Jakarta Sans',sans-serif; padding-bottom:110px; -webkit-font-smoothing:antialiased; }
@@ -459,7 +463,6 @@ export default function AnalisisPage() {
 
         <div className="an-body">
 
-          {/* ── EMPTY ── */}
           {enriched.length === 0 ? (
             <div className="an-empty" onClick={() => router.push("/produk")}>
               <div className="an-empty-icon"><IconEmpty /></div>
@@ -469,36 +472,34 @@ export default function AnalisisPage() {
             </div>
           ) : (
             <>
-              {/* ── SUMMARY STRIP (uses Net Profit Margin, not stored margin_percentage) ── */}
+              {/* ── SUMMARY STRIP ── */}
               <div className="an-summary-strip">
                 <div className="an-summary-chip green">
                   <div className="an-summary-chip-val">{sihatCount}</div>
-                  <div className="an-summary-chip-label">Sihat</div>
+                  <div className="an-summary-chip-label">Sihat (≥30%)</div>
                 </div>
                 <div className="an-summary-chip amber">
                   <div className="an-summary-chip-val">{sederhanaCount}</div>
-                  <div className="an-summary-chip-label">Sederhana</div>
+                  <div className="an-summary-chip-label">Sederhana (15-29%)</div>
                 </div>
                 <div className="an-summary-chip red">
                   <div className="an-summary-chip-val">{rendahCount}</div>
-                  <div className="an-summary-chip-label">Rendah</div>
+                  <div className="an-summary-chip-label">Rendah (&lt;15%)</div>
                 </div>
               </div>
 
-              {/* ── MULTIPLE PRODUCT CVP SUMMARY ── */}
+              {/* ── MULTIPLE PRODUCT CVP SUMMARY with SHARED FIXED COSTS ── */}
               <div className="an-multi-card" style={{ animationDelay:"0.05s" }}>
-                <div className="an-multi-title">📊 CVP Pelbagai Produk</div>
+                <div className="an-multi-title">CVP Pelbagai Produk (Kongsi Kos Tetap)</div>
                 <div className="an-multi-sub">
-                  Jumlah {multi.total_units} unit dari {enriched.length} produk · Formula: WACM + BEP Gabungan
+                  Jumlah {multi.total_units} unit dari {enriched.length} produk · Kos tetap dikongsi
                 </div>
                 <div className="an-multi-grid">
-                  {/* WACM */}
                   <div className="an-multi-kpi highlight">
                     <div className="an-multi-kpi-label">Purata Berwajaran CM (WACM)</div>
                     <div className="an-multi-kpi-val">RM {multi.wacm.toFixed(2)}</div>
                     <div className="an-multi-kpi-sub">Σ (CM/unit × sales mix%)</div>
                   </div>
-                  {/* BEP Total */}
                   <div className="an-multi-kpi highlight">
                     <div className="an-multi-kpi-label">BEP Gabungan (unit)</div>
                     <div className="an-multi-kpi-val">
@@ -506,13 +507,11 @@ export default function AnalisisPage() {
                     </div>
                     <div className="an-multi-kpi-sub">Jumlah FC ÷ WACM</div>
                   </div>
-                  {/* Total Fixed Cost */}
                   <div className="an-multi-kpi">
-                    <div className="an-multi-kpi-label">Jumlah Kos Tetap</div>
-                    <div className="an-multi-kpi-val">RM {multi.total_fc.toFixed(0)}</div>
-                    <div className="an-multi-kpi-sub">semua produk</div>
+                    <div className="an-multi-kpi-label">Jumlah Kos Tetap (Dikongsi)</div>
+                    <div className="an-multi-kpi-val">RM {multi.totalFixedCost.toFixed(0)}</div>
+                    <div className="an-multi-kpi-sub">SEKALI untuk SEMUA produk</div>
                   </div>
-                  {/* Total Revenue at capacity */}
                   <div className="an-multi-kpi">
                     <div className="an-multi-kpi-label">Hasil Jualan (kapasiti)</div>
                     <div className="an-multi-kpi-val">RM {multi.total_revenue.toFixed(0)}</div>
@@ -520,10 +519,13 @@ export default function AnalisisPage() {
                   </div>
                 </div>
 
-                {/* Sales mix table */}
+                {/* Sales mix table with SHARED fixed costs */}
                 <div className="an-multi-info">
+                  <div style={{ marginBottom:8, color:"#60a5fa", fontSize:10, fontWeight:700 }}>
+                    📌 Setiap produk dikenakan kos tetap mengikut nisbah jualan (sales mix)
+                  </div>
                   {enriched.map(p => (
-                    <div key={p.product_id} style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <div key={p.product_id} style={{ display:"flex", justifyContent:"space-between", marginBottom:4, flexWrap:"wrap", gap:4 }}>
                       <strong>{p.name}</strong>
                       <span>
                         Mix: {p.sales_mix_pct.toFixed(1)}% ·
@@ -532,10 +534,13 @@ export default function AnalisisPage() {
                       </span>
                     </div>
                   ))}
+                  <div style={{ marginTop:8, paddingTop:6, borderTop:"1px solid rgba(255,255,255,0.1)", fontSize:10, color:"#94a3b8" }}>
+                    💡 Kos Tetap (RM {multi.totalFixedCost.toFixed(0)}) dikongsi dan diagihkan mengikut peratus jualan setiap produk
+                  </div>
                 </div>
               </div>
 
-              {/* ── BAR CHART — uses Net Profit Margin ── */}
+              {/* ── BAR CHART ── */}
               <div className="an-card" style={{ animationDelay:"0.08s" }}>
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
                   <div>
@@ -543,9 +548,12 @@ export default function AnalisisPage() {
                     <div style={{ fontSize:14, fontWeight:800, color:"#1e293b", letterSpacing:"-0.01em" }}>
                       Margin Untung Bersih % Per Produk
                     </div>
+                    <div style={{ fontSize:10, color:"#64748b", marginTop:4 }}>
+                      (Selepas ditolak kos tetap yang dikongsi)
+                    </div>
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
-                    {[{ dot:"#22c55e", label:"Sihat" },{ dot:"#f59e0b", label:"Sederhana" },{ dot:"#ef4444", label:"Rendah" }].map(l => (
+                    {[{ dot:"#22c55e", label:"Sihat (≥30%)" },{ dot:"#f59e0b", label:"Sederhana (15-29%)" },{ dot:"#ef4444", label:"Rendah (<15%)" }].map(l => (
                       <div key={l.label} style={{ display:"flex", alignItems:"center", gap:4 }}>
                         <div style={{ width:6, height:6, borderRadius:"50%", background:l.dot }} />
                         <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>{l.label}</span>
@@ -580,7 +588,7 @@ export default function AnalisisPage() {
                       <div className="an-bar-meta">
                         {p.total_batch_cost > 0 ? (
                           <>
-                            <span className="an-bar-meta-text">Kos batch: RM {p.total_batch_cost.toFixed(2)}</span>
+                            <span className="an-bar-meta-text">Kos berubah batch: RM {p.total_batch_cost.toFixed(2)}</span>
                             <span className="an-bar-meta-text">Jual: RM {p.selling_price.toFixed(2)}/unit</span>
                           </>
                         ) : (
@@ -596,7 +604,7 @@ export default function AnalisisPage() {
                     <div style={{ width:20, height:20, borderRadius:6, background:"#eff6ff", display:"flex", alignItems:"center", justifyContent:"center" }}>
                       <IconTrend />
                     </div>
-                    <span className="an-avg-label">Purata Margin Untung Bersih</span>
+                    <span className="an-avg-label">Purata Margin Untung Bersih (Selepas Kos Tetap)</span>
                   </div>
                   <span className="an-avg-val">{avgNetMargin.toFixed(1)}%</span>
                 </div>
@@ -625,14 +633,12 @@ export default function AnalisisPage() {
                       <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{selectedProduct.name}</div>
                     </div>
                     <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-                      {/* Net Profit Margin — primary */}
                       <div className="an-margin-pill" style={{ background: getMarginMeta(selectedProduct.net_profit_margin_pct).bg }}>
                         <div className="an-margin-dot" style={{ background: getMarginMeta(selectedProduct.net_profit_margin_pct).dot }} />
                         <span style={{ color: getMarginMeta(selectedProduct.net_profit_margin_pct).text, fontSize:11, fontWeight:700 }}>
                           Untung {selectedProduct.net_profit_margin_pct.toFixed(1)}% — {getMarginMeta(selectedProduct.net_profit_margin_pct).label}
                         </span>
                       </div>
-                      {/* CM Ratio — secondary */}
                       <span style={{ fontSize:10, color:"#94a3b8", fontWeight:600 }}>CM Ratio: {selectedProduct.cm_ratio.toFixed(1)}%</span>
                     </div>
                   </div>
@@ -645,11 +651,28 @@ export default function AnalisisPage() {
                       <div className="an-pie-wrap" style={{ marginBottom:14 }}>
                         <div style={{ flexShrink:0 }}>
                           <svg width="160" height="160" viewBox="0 0 160 160">
-                            {pie.map((seg, i) => (
-                              <path key={i} d={seg.path} fill={seg.color} stroke="#fff" strokeWidth="2.5" />
-                            ))}
+                            {(() => {
+                              const total = selectedProduct.bahan_total + selectedProduct.tenaga_total + selectedProduct.overhead_total;
+                              const segments = [
+                                { label: "Bahan", value: selectedProduct.bahan_total, color: "#3b82f6" },
+                                { label: "Tenaga", value: selectedProduct.tenaga_total, color: "#6366f1" },
+                                { label: "Overhead", value: selectedProduct.overhead_total, color: "#f59e0b" },
+                              ].filter(s => s.value > 0);
+                              let cumulative = 0;
+                              return segments.map((seg, i) => {
+                                const pct = seg.value / total;
+                                const startAngle = cumulative * 2 * Math.PI - Math.PI / 2;
+                                cumulative += pct;
+                                const endAngle = cumulative * 2 * Math.PI - Math.PI / 2;
+                                const r = 62; const cx = 80; const cy = 80;
+                                const x1 = cx + r * Math.cos(startAngle); const y1 = cy + r * Math.sin(startAngle);
+                                const x2 = cx + r * Math.cos(endAngle); const y2 = cy + r * Math.sin(endAngle);
+                                const largeArc = pct > 0.5 ? 1 : 0;
+                                return <path key={i} d={`M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} Z`} fill={seg.color} stroke="#fff" strokeWidth="2.5" />;
+                              });
+                            })()}
                             <circle cx="80" cy="80" r="36" fill="white" />
-                            <text x="80" y="75" textAnchor="middle" fontSize="9" fill="#94a3b8" fontWeight="700" fontFamily="Plus Jakarta Sans, sans-serif">KOS BATCH</text>
+                            <text x="80" y="74" textAnchor="middle" fontSize="8" fill="#94a3b8" fontWeight="700" fontFamily="Plus Jakarta Sans, sans-serif">KOS BERUBAH</text>
                             <text x="80" y="90" textAnchor="middle" fontSize="11" fill="#1e293b" fontWeight="800" fontFamily="Plus Jakarta Sans, sans-serif">
                               RM {selectedProduct.total_batch_cost.toFixed(0)}
                             </text>
@@ -657,9 +680,9 @@ export default function AnalisisPage() {
                         </div>
                         <div className="an-pie-legend">
                           {[
-                            { label:"Bahan",   value:selectedProduct.bahan_total,   color:"#3b82f6", textColor:"#1d4ed8" },
-                            { label:"Tenaga",  value:selectedProduct.tenaga_total,  color:"#6366f1", textColor:"#4338ca" },
-                            { label:"Overhead",value:selectedProduct.overhead_total,color:"#f59e0b", textColor:"#b45309" },
+                            { label:"Bahan (Berubah)", value:selectedProduct.bahan_total, color:"#3b82f6", textColor:"#1d4ed8" },
+                            { label:"Tenaga (Berubah)", value:selectedProduct.tenaga_total, color:"#6366f1", textColor:"#4338ca" },
+                            { label:"Overhead (Berubah)", value:selectedProduct.overhead_total, color:"#f59e0b", textColor:"#b45309" },
                           ].map(item => {
                             const pct = selectedProduct.total_batch_cost > 0 ? ((item.value / selectedProduct.total_batch_cost) * 100).toFixed(1) : "0";
                             return (
@@ -681,10 +704,17 @@ export default function AnalisisPage() {
                         </div>
                       </div>
 
+                      {/* SECTION: Fixed Cost Allocation Note */}
+                      <div style={{ background:"#eff6ff", borderRadius:12, padding:"10px 12px", marginBottom:14, fontSize:11, color:"#1d4ed8", lineHeight:1.5 }}>
+                        <strong>Nota Kos Tetap:</strong> Jumlah kos tetap RM {multi.totalFixedCost.toFixed(0)} dikongsi dengan semua produk.
+                        Untuk produk <strong>{selectedProduct.name}</strong>, bahagian kos tetap = RM {((multi.totalFixedCost * (selectedProduct.sales_mix_pct / 100))).toFixed(2)} 
+                        (ikut nisbah jualan {selectedProduct.sales_mix_pct.toFixed(1)}%).
+                      </div>
+
                       {/* SECTION: Margin & CM */}
                       <div className="an-section-divider">
                         <div className="an-section-divider-line" />
-                        <div className="an-section-divider-label">Margin &amp; Sumbangan</div>
+                        <div className="an-section-divider-label">Margin &amp; Sumbangan (Selepas Kos Berubah)</div>
                         <div className="an-section-divider-line" />
                       </div>
                       <div className="an-kpi-grid">
@@ -701,7 +731,7 @@ export default function AnalisisPage() {
                         <div className="an-kpi blue">
                           <div className="an-kpi-label">Kos Berubah/Unit</div>
                           <div className="an-kpi-val">RM {selectedProduct.variable_cost_per_unit.toFixed(2)}</div>
-                          <div className="an-kpi-sub">bahan + kos berubah</div>
+                          <div className="an-kpi-sub">bahan + kos berubah lain</div>
                         </div>
                         <div className={`an-kpi ${selectedProduct.cm_per_unit >= 0 ? "green" : "red"}`}>
                           <div className="an-kpi-label">CM / Unit</div>
@@ -737,7 +767,7 @@ export default function AnalisisPage() {
                         <div className="an-kpi slate">
                           <div className="an-kpi-label">Harga Minimum Jual</div>
                           <div className="an-kpi-val">RM {selectedProduct.min_selling_price.toFixed(2)}</div>
-                          <div className="an-kpi-sub">kos batch ÷ {selectedProduct.units_produced} unit</div>
+                          <div className="an-kpi-sub">kos berubah ÷ {selectedProduct.units_produced} unit</div>
                         </div>
                       </div>
 
@@ -751,46 +781,46 @@ export default function AnalisisPage() {
                         <div className="an-bep-header">
                           <div className="an-bep-header-icon"><IconTarget /></div>
                           <div>
-                            <div className="an-bep-title">Break-Even Point (Single Product)</div>
-                            <div className="an-bep-subtitle">Angka minimum untuk produk ini tidak rugi</div>
+                            <div className="an-bep-title">Break-Even Point</div>
+                            <div className="an-bep-subtitle">Unit yang perlu dijual untuk tidak rugi (selepas kos tetap)</div>
                           </div>
                         </div>
                         <div className="an-bep-grid">
                           <div className="an-bep-kpi hl">
-                            <div className="an-bep-kpi-label">Harga Minimum Jual</div>
-                            <div className="an-bep-kpi-val">RM {selectedProduct.min_selling_price.toFixed(2)}</div>
-                            <div className="an-bep-kpi-sub">kos batch ÷ {selectedProduct.units_produced} unit</div>
-                          </div>
-                          <div className="an-bep-kpi hl">
                             <div className="an-bep-kpi-label">Unit Minimum Jual</div>
                             <div className="an-bep-kpi-val">
-                              {selectedProduct.bep_units_single === Infinity ? "∞" : Math.ceil(selectedProduct.bep_units_single)} unit
+                              {selectedProduct.bep_units_multi === Infinity ? "∞" : Math.ceil(selectedProduct.bep_units_multi)} unit
                             </div>
                             <div className="an-bep-kpi-sub">dari {selectedProduct.units_produced} unit batch</div>
                           </div>
                           <div className="an-bep-kpi">
                             <div className="an-bep-kpi-label">Hasil Jualan BEP</div>
                             <div className="an-bep-kpi-val" style={{ fontSize:13 }}>
-                              {selectedProduct.bep_units_single === Infinity ? "∞"
-                                : `RM ${(Math.ceil(selectedProduct.bep_units_single) * selectedProduct.selling_price).toFixed(2)}`}
+                              {selectedProduct.bep_units_multi === Infinity ? "∞"
+                                : `RM ${(Math.ceil(selectedProduct.bep_units_multi) * selectedProduct.selling_price).toFixed(2)}`}
                             </div>
                             <div className="an-bep-kpi-sub">BEP unit × RM {selectedProduct.selling_price.toFixed(2)}</div>
                           </div>
                           <div className="an-bep-kpi">
                             <div className="an-bep-kpi-label">Kos Seunit (Total)</div>
                             <div className="an-bep-kpi-val" style={{ fontSize:13 }}>RM {selectedProduct.total_cost_per_unit.toFixed(2)}</div>
-                            <div className="an-bep-kpi-sub">kos batch ÷ {selectedProduct.units_produced} unit</div>
+                            <div className="an-bep-kpi-sub">kos berubah + kos tetap diagih</div>
+                          </div>
+                          <div className="an-bep-kpi">
+                            <div className="an-bep-kpi-label">Kos Tetap Diagih</div>
+                            <div className="an-bep-kpi-val" style={{ fontSize:13 }}>RM {((multi.totalFixedCost * (selectedProduct.sales_mix_pct / 100))).toFixed(2)}</div>
+                            <div className="an-bep-kpi-sub">ikut nisbah {selectedProduct.sales_mix_pct.toFixed(1)}%</div>
                           </div>
                         </div>
 
                         {/* Safety margin bar */}
-                        {selectedProduct.bep_units_single !== Infinity && (
+                        {selectedProduct.bep_units_multi !== Infinity && (
                           <div className="an-safety">
                             <div className="an-safety-header">
                               <div className="an-safety-label"><IconShield /><span>Margin Keselamatan</span></div>
                               <div className="an-safety-pct">
                                 {(() => {
-                                  const bepCeil   = Math.ceil(selectedProduct.bep_units_single);
+                                  const bepCeil   = Math.ceil(selectedProduct.bep_units_multi);
                                   const safeUnits = Math.max(0, selectedProduct.units_produced - bepCeil);
                                   const safePct   = (safeUnits / selectedProduct.units_produced) * 100;
                                   return `${safePct.toFixed(1)}% (${safeUnits} unit buffer)`;
@@ -798,7 +828,7 @@ export default function AnalisisPage() {
                               </div>
                             </div>
                             {(() => {
-                              const bepCeil    = Math.ceil(selectedProduct.bep_units_single);
+                              const bepCeil    = Math.ceil(selectedProduct.bep_units_multi);
                               const bepBarFill = Math.min(100, (bepCeil / selectedProduct.units_produced) * 100);
                               const safeUnits  = Math.max(0, selectedProduct.units_produced - bepCeil);
                               return (
@@ -830,25 +860,33 @@ export default function AnalisisPage() {
                         <div className="an-cost-row">
                           <div className="an-cost-row-left">
                             <div className="an-cost-icon" style={{ background:"#f5f3ff" }}><IconUser /></div>
-                            <span className="an-cost-label">Tenaga Kerja</span>
+                            <span className="an-cost-label">Tenaga Kerja (Berubah)</span>
                           </div>
                           <span className="an-cost-val">RM {selectedProduct.tenaga_total.toFixed(2)}</span>
                         </div>
                         <div className="an-cost-row">
                           <div className="an-cost-row-left">
                             <div className="an-cost-icon" style={{ background:"#fffbeb" }}><IconZap /></div>
-                            <span className="an-cost-label">Overhead</span>
+                            <span className="an-cost-label">Overhead (Berubah)</span>
                           </div>
                           <span className="an-cost-val">RM {selectedProduct.overhead_total.toFixed(2)}</span>
                         </div>
                         <div className="an-cost-divider" />
                         <div className="an-cost-row">
-                          <span className="an-cost-label" style={{ fontWeight:700, color:"#1e293b" }}>Total Kos Batch</span>
+                          <span className="an-cost-label" style={{ fontWeight:700, color:"#1e293b" }}>Total Kos Berubah Batch</span>
                           <span className="an-cost-val" style={{ fontSize:14 }}>RM {selectedProduct.total_batch_cost.toFixed(2)}</span>
                         </div>
+                        <div className="an-cost-row">
+                          <span className="an-cost-label" style={{ fontWeight:600 }}>Kos Tetap (Diagih)</span>
+                          <span className="an-cost-val" style={{ color:"#dc2626" }}>RM {((multi.totalFixedCost * (selectedProduct.sales_mix_pct / 100))).toFixed(2)}</span>
+                        </div>
+                        <div className="an-cost-divider" />
                         <div className="an-cost-total-row">
-                          <span className="an-cost-total-label">💰 Harga Minimum Jual</span>
+                          <span className="an-cost-total-label">Harga Minimum Jual (Tutup Kos Berubah)</span>
                           <span className="an-cost-total-val">RM {selectedProduct.min_selling_price.toFixed(2)} / unit</span>
+                        </div>
+                        <div style={{ marginTop:8, fontSize:10, color:"#64748b", textAlign:"center" }}>
+                          Untuk untung, harga jual RM {selectedProduct.min_selling_price.toFixed(2)} + (RM {((multi.totalFixedCost * (selectedProduct.sales_mix_pct / 100)) / selectedProduct.units_produced).toFixed(2)} kos tetap/unit)
                         </div>
                       </div>
 
@@ -869,15 +907,15 @@ export default function AnalisisPage() {
                             <div>
                               <div className="an-status-title">
                                 {selectedProduct.net_profit_batch >= 0
-                                  ? `Untung batch: RM ${selectedProduct.net_profit_batch.toFixed(2)}`
-                                  : `Rugi batch: RM ${Math.abs(selectedProduct.net_profit_batch).toFixed(2)}`}
+                                  ? `Untung batch: RM ${selectedProduct.net_profit_batch.toFixed(2)} (selepas kos tetap dikongsi)`
+                                  : `Rugi batch: RM ${Math.abs(selectedProduct.net_profit_batch).toFixed(2)} (selepas kos tetap dikongsi)`}
                               </div>
                               <div className="an-status-desc">
                                 {meta.label === "Sihat"
-                                  ? `Margin ${selectedProduct.net_profit_margin_pct.toFixed(1)}% — produk ini menguntungkan. Teruskan strategi semasa.`
+                                  ? `Margin ${selectedProduct.net_profit_margin_pct.toFixed(1)}% — produk ini menguntungkan selepas semua kos.`
                                   : meta.label === "Sederhana"
-                                  ? `Margin ${selectedProduct.net_profit_margin_pct.toFixed(1)}% — cuba kurangkan kos atau naikkan harga.`
-                                  : `Margin ${selectedProduct.net_profit_margin_pct.toFixed(1)}% — semak semula kos dan harga jual segera.`}
+                                  ? `Margin ${selectedProduct.net_profit_margin_pct.toFixed(1)}% — cuba kurangkan kos berubah atau naikkan harga.`
+                                  : `Margin ${selectedProduct.net_profit_margin_pct.toFixed(1)}% — semak semula kos berubah dan harga jual segera.`}
                               </div>
                             </div>
                           </div>
