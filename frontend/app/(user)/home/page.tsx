@@ -36,11 +36,7 @@ interface HomeStats {
 }
 
 const quotes = [
-  "Fokus pada margin yang lebih sihat hari ini.",
-  "Setiap sen yang dijimatkan adalah keuntungan.",
-  "Bisnes berjaya bermula dengan kos yang terkawal.",
-  "Fokus pada nilai, bukan sekadar harga.",
-  "Langkah kecil hari ini, kejayaan besar esok.",
+  "Smart Cost. Turning Numbers into growth."
 ];
 
 export default function HomePage() {

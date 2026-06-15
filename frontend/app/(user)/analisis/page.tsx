@@ -882,7 +882,7 @@ export default function AnalisisPage() {
                         </div>
                         <div className="an-cost-divider" />
                         <div className="an-cost-total-row">
-                          <span className="an-cost-total-label">Harga Minimum Jual (Tutup Kos Berubah)</span>
+                          <span className="an-cost-total-label">Harga Minimum Jual (Menampung Kos Berubah)</span>
                           <span className="an-cost-total-val">RM {selectedProduct.min_selling_price.toFixed(2)} / unit</span>
                         </div>
                         <div style={{ marginTop:8, fontSize:10, color:"#64748b", textAlign:"center" }}>
