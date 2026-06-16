@@ -923,15 +923,6 @@ export default function ProductDetailPage() {
                     <strong>Jumlah Kos Batch:</strong> RM {cvp.totalBatchCost.toFixed(2)}
                   </div>
 
-                  {/* NEW: Shared Fixed Cost Info */}
-                  {sharedFixedCost > 0 && (
-                    <div className="pd-cost-info-row" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
-                      <strong>📌 Kos Tetap Dikongsi:</strong> RM {sharedFixedCost.toFixed(2)} (dari SEMUA produk)
-                      &nbsp;&nbsp;·&nbsp;&nbsp;
-                      <strong>Bahagian produk ini ({salesMixPct.toFixed(1)}%):</strong> RM {cvp.allocatedFixedCost.toFixed(2)}
-                    </div>
-                  )}
-
                 {/* Profit / Loss banner */}
                 {sellingPrice > 0 && (
                   <div className={`pd-profit-banner ${cvp.netProfitBatch >= 0 ? "profit" : "loss"}`}>
