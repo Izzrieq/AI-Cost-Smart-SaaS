@@ -36,7 +36,7 @@ interface HomeStats {
 }
 
 const quotes = [
-  "Smart Cost. Turning Numbers into growth."
+  "Smart Cost. Turning Numbers Into Growth."
 ];
 
 export default function HomePage() {

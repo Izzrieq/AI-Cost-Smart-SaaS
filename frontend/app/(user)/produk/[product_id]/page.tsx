@@ -952,6 +952,38 @@ export default function ProductDetailPage() {
                     </div>
                   </div>
                 )}
+                {sharedFixedCost > 0 && (
+                  <div className="pd-card" style={{ 
+                    background: "#f0fdf4", 
+                    border: "1px solid #bbf7d0",
+                    padding: "12px 16px"
+                  }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      <div style={{ 
+                        width: 28, 
+                        height: 28, 
+                        borderRadius: "50%", 
+                        background: "#dcfce7", 
+                        display: "flex", 
+                        alignItems: "center", 
+                        justifyContent: "center",
+                        flexShrink: 0,
+                        fontSize: 14
+                      }}>
+                        💡
+                      </div>
+                      <div style={{ fontSize: 12, color: "#166534", lineHeight: 1.6 }}>
+                        <strong>Kos Tetap Dikongsi:</strong> RM {sharedFixedCost.toFixed(2)} 
+                        <span style={{ color: "#15803d", fontWeight: 500 }}> (sewa, utiliti, gaji tetap)</span>
+                        <br />
+                        Bahagian <strong>{product?.name}</strong> = RM {cvp.allocatedFixedCost.toFixed(2)} 
+                        <span style={{ color: "#15803d", fontWeight: 500 }}>
+                          (berdasarkan {salesMixPct.toFixed(1)}% daripada jumlah jualan)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
