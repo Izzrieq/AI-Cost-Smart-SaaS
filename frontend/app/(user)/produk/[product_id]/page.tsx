@@ -72,92 +72,99 @@ const IconTarget   = () => <svg width="13" height="13" viewBox="0 0 24 24" fill=
 //  Safety Margin %       = Safety units / units_produced × 100
 //
 //  Net Profit/batch      = (CM/unit × units_produced) − Fixed Cost
-
 const calcCVP = (
   productions: Production[],
   costs: Cost[],
   sellingPrice: number,
   unitsProduced: number,
+  sharedFixedCost: number = 0,  // NEW: global fixed costs from all products
+  salesMixPct: number = 100,    // NEW: this product's % of total sales
 ) => {
-  if (unitsProduced <= 0 || sellingPrice <= 0) {
-    return {
-      variableCostPerUnit: 0, fixedCostPerBatch: 0, totalVariableCost: 0,
-      totalFixedCost: 0, totalBatchCost: 0, cmPerUnit: 0,
-      cmRatio: 0, netProfitMarginPct: 0, bepUnits: 0, bepRevenue: 0,
-      costPerUnitTotal: 0, minSellingPrice: 0, safetyMarginUnits: 0,
-      safetyMarginPct: 0, netProfitBatch: 0, isProfitable: false,
-    };
-  }
-
-  const bahanTotal             = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
-  const variableCosts          = costs.filter((c) => c.behavior === "variable");
-  const fixedCosts             = costs.filter((c) => c.behavior === "fixed");
+  // If no shared fixed cost provided, use the product's own fixed costs (fallback)
+  const variableCosts = costs.filter((c) => c.behavior === "variable");
+  const fixedCosts = costs.filter((c) => c.behavior === "fixed");
+  
+  // Product's own fixed costs (for display)
+  const ownFixedCost = fixedCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+  
+  // SHARED fixed cost allocated to this product based on sales mix
+  const allocatedFixedCost = sharedFixedCost * (salesMixPct / 100);
+  
+  // Use the LARGER of own fixed cost or allocated shared fixed cost
+  // This ensures products without fixed costs still show the shared ones
+  const totalFixedCost = Math.max(ownFixedCost, allocatedFixedCost);
+  
+  const bahanTotal = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
   const totalVariableCostOther = variableCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-  const totalFixedCost         = fixedCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
 
-  const totalVariableCost   = bahanTotal + totalVariableCostOther;
-  const variableCostPerUnit = totalVariableCost / unitsProduced;
-  const totalBatchCost      = totalVariableCost + totalFixedCost;
-  const costPerUnitTotal    = totalBatchCost / unitsProduced;
-  const minSellingPrice     = costPerUnitTotal; // same value, clearer label for UI
+  const totalVariableCost = bahanTotal + totalVariableCostOther;
+  const variableCostPerUnit = unitsProduced > 0 ? totalVariableCost / unitsProduced : 0;
+  const totalBatchCost = totalVariableCost + totalFixedCost;
+  const costPerUnitTotal = totalBatchCost / unitsProduced;
+  const minSellingPrice = costPerUnitTotal;
 
-  const cmPerUnit           = sellingPrice - variableCostPerUnit;
-  const cmRatio             = sellingPrice > 0 ? (cmPerUnit / sellingPrice) * 100 : 0;
-
-  // Net Profit Margin — what SME owners understand (uses TOTAL cost per unit)
-  const netProfitMarginPct  = sellingPrice > 0
+  const cmPerUnit = sellingPrice - variableCostPerUnit;
+  const cmRatio = sellingPrice > 0 ? (cmPerUnit / sellingPrice) * 100 : 0;
+  const netProfitMarginPct = sellingPrice > 0
     ? ((sellingPrice - costPerUnitTotal) / sellingPrice) * 100 : 0;
 
-  // BEP
-  const bepUnitsRaw   = cmPerUnit > 0 ? totalFixedCost / cmPerUnit : Infinity;
-  const bepUnitsCeil  = bepUnitsRaw === Infinity ? Infinity : Math.ceil(bepUnitsRaw);
-  // FIXED: BEP Revenue uses ceil units, not raw float
-  const bepRevenue    = bepUnitsCeil === Infinity ? Infinity : bepUnitsCeil * sellingPrice;
+  const bepUnitsRaw = cmPerUnit > 0 ? totalFixedCost / cmPerUnit : Infinity;
+  const bepUnitsCeil = bepUnitsRaw === Infinity ? Infinity : Math.ceil(bepUnitsRaw);
+  const bepRevenue = bepUnitsCeil === Infinity ? Infinity : bepUnitsCeil * sellingPrice;
 
-  // Safety Margin
   const safetyMarginUnits = bepUnitsCeil === Infinity ? 0 : Math.max(0, unitsProduced - bepUnitsCeil);
-  const safetyMarginPct   = unitsProduced > 0 ? (safetyMarginUnits / unitsProduced) * 100 : 0;
-
-  // Net profit per batch
+  const safetyMarginPct = unitsProduced > 0 ? (safetyMarginUnits / unitsProduced) * 100 : 0;
   const netProfitBatch = (cmPerUnit * unitsProduced) - totalFixedCost;
 
   return {
-    variableCostPerUnit, fixedCostPerBatch: totalFixedCost, totalVariableCost,
-    totalFixedCost, totalBatchCost, cmPerUnit, cmRatio,
-    netProfitMarginPct, bepUnits: bepUnitsRaw, bepRevenue,
-    costPerUnitTotal, minSellingPrice, safetyMarginUnits,
-    safetyMarginPct, netProfitBatch, isProfitable: cmPerUnit > 0,
+    variableCostPerUnit, 
+    fixedCostPerBatch: totalFixedCost,  // Now shows SHARED fixed cost
+    ownFixedCost,                       // NEW: product's own fixed costs
+    allocatedFixedCost,                 // NEW: allocated from shared pool
+    totalVariableCost,
+    totalFixedCost,
+    totalBatchCost, 
+    cmPerUnit, 
+    cmRatio,
+    netProfitMarginPct, 
+    bepUnits: bepUnitsRaw, 
+    bepRevenue,
+    costPerUnitTotal, 
+    minSellingPrice, 
+    safetyMarginUnits,
+    safetyMarginPct, 
+    netProfitBatch, 
+    isProfitable: cmPerUnit > 0,
   };
 };
 
-// Header uses Net Profit Margin (37%) NOT CM Ratio (69%)
-const getMarginMeta = (margin: number) => {
-  if (margin >= 30) return { label: "Sihat",     dot: "#4ade80", color: "#15803d" };
-  if (margin >= 15) return { label: "Sederhana", dot: "#fbbf24", color: "#b45309" };
-  return               { label: "Rendah",     dot: "#fca5a5", color: "#dc2626" };
-};
+// ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
 export default function ProductDetailPage() {
   const router = useRouter();
   const { product_id } = useParams();
 
-  const [product,     setProduct]     = useState<Product | null>(null);
-  const [costs,       setCosts]       = useState<Cost[]>([]);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [costs, setCosts] = useState<Cost[]>([]);
   const [productions, setProductions] = useState<Production[]>([]);
-  const [tab,         setTab]         = useState<Tab>("bahan");
-  const [loading,     setLoading]     = useState(true);
-  const [deleting,    setDeleting]    = useState(false);
-  const [search,      setSearch]      = useState("");
+  const [tab, setTab] = useState<Tab>("bahan");
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState("");
 
-  const [showAddCost,       setShowAddCost]       = useState(false);
+  const [showAddCost, setShowAddCost] = useState(false);
   const [showAddProduction, setShowAddProduction] = useState(false);
-  const [addingCost,        setAddingCost]        = useState(false);
-  const [addingProd,        setAddingProd]        = useState(false);
+  const [addingCost, setAddingCost] = useState(false);
+  const [addingProd, setAddingProd] = useState(false);
 
   const [selectedProduction, setSelectedProduction] = useState<Production | null>(null);
-  const [selectedCost,       setSelectedCost]       = useState<Cost | null>(null);
-  const [savingEdit,         setSavingEdit]          = useState(false);
-  const [deletingItem,       setDeletingItem]        = useState(false);
+  const [selectedCost, setSelectedCost] = useState<Cost | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingItem, setDeletingItem] = useState(false);
+
+  // ── NEW: Shared fixed costs state ──
+  const [sharedFixedCost, setSharedFixedCost] = useState<number>(0);
+  const [allProductsData, setAllProductsData] = useState<{ product_id: string; units: number }[]>([]);
 
   const [costForm, setCostForm] = useState({ name: "", behavior: "fixed", cost_per_unit: "", total_cost: "" });
   const [prodForm, setProdForm] = useState({
@@ -172,15 +179,56 @@ export default function ProductDetailPage() {
 
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
+  // ── UPDATED FETCH: Collect ALL fixed costs from ALL products ──
   useEffect(() => {
     const fetchAll = async () => {
       try {
+        // First, fetch ALL products to get their fixed costs
+        const allProdRes = await fetch(`${API_URL}/products`, { 
+          headers: { Authorization: `Bearer ${token}` } 
+        });
+        const allProdData = await allProdRes.json();
+        const allProducts: Product[] = allProdData.products || [];
+
+        let totalFixedCost = 0;
+        const productsWithUnits: { product_id: string; units: number }[] = [];
+
+        // Collect fixed costs from ALL products
+        for (const p of allProducts) {
+          const [costsRes, prodsRes] = await Promise.all([
+            fetch(`${API_URL}/products/${p.product_id}/costs`, { headers: { Authorization: `Bearer ${token}` } }),
+            fetch(`${API_URL}/products/${p.product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
+          ]);
+          const costsData = await costsRes.json();
+          const prodsData = await prodsRes.json();
+          const costs: Cost[] = costsData.costs || [];
+          const productions: Production[] = prodsData.productions || [];
+
+          // Calculate units produced for this product
+          const units = productions.length > 0
+            ? Math.max(...productions.map(pr => Number(pr.units_produced) || 0).filter(n => n > 0), 0) || 1
+            : 1;
+          
+          productsWithUnits.push({ product_id: p.product_id, units });
+
+          // Add fixed costs from this product to the global pool
+          const fixedFromProduct = costs
+            .filter(c => c.behavior === "fixed")
+            .reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+          totalFixedCost += fixedFromProduct;
+        }
+
+        setSharedFixedCost(totalFixedCost);
+        setAllProductsData(productsWithUnits);
+
+        // Now fetch the current product's data
         const [prodRes, costsRes, prodsRes] = await Promise.all([
-          fetch(`${API_URL}/products/${product_id}`,             { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${API_URL}/products/${product_id}/costs`,       { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/products/${product_id}`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/products/${product_id}/costs`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${API_URL}/products/${product_id}/productions`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         const [pd, cd, prd] = await Promise.all([prodRes.json(), costsRes.json(), prodsRes.json()]);
+        
         setProduct(pd.product);
         setCosts(cd.costs || []);
         setProductions(prd.productions || []);
@@ -190,30 +238,40 @@ export default function ProductDetailPage() {
     fetchAll();
   }, [product_id]);
 
-  // ── DERIVED CVP ───────────────────────────────────────────────────────────
-  const latestBatch   = productions.length > 0 ? productions[0] : null;
+  // ── DERIVED CVP with SHARED FIXED COSTS ──────────────────────────────────
+  const latestBatch = productions.length > 0 ? productions[0] : null;
   const unitsProduced = latestBatch
     ? Math.max(...productions.map(p => Number(p.units_produced) || 0).filter(n => n > 0), 0) || 1
     : 1;
-  const sellingPrice  = parseFloat(String(product?.selling_price ?? 0));
-  const cvp           = calcCVP(productions, costs, sellingPrice, unitsProduced);
+  const sellingPrice = parseFloat(String(product?.selling_price ?? 0));
 
-  const bahanTotal  = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
+  // Calculate sales mix for this product
+  const totalUnits = allProductsData.reduce((sum, p) => sum + p.units, 0);
+  const salesMixPct = totalUnits > 0 ? (unitsProduced / totalUnits) * 100 : 100;
+
+  // Use the UPDATED calcCVP with shared fixed costs
+  const cvp = calcCVP(productions, costs, sellingPrice, unitsProduced, sharedFixedCost, salesMixPct);
+
+  // Rest of your calculations remain the same
+  const bahanTotal = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
   const tenagaTotal = costs.filter(c => c?.type === "tenaga").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-  const lainTotal   = costs.filter(c => c?.type === "indirect").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+  const lainTotal = costs.filter(c => c?.type === "indirect").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
 
-  const hasBahan       = productions.length > 0;
-  const hasTenaga      = costs.filter(c => c?.type === "tenaga").length > 0;
-  const hasLain        = costs.filter(c => c?.type === "indirect").length > 0;
+  const hasBahan = productions.length > 0;
+  const hasTenaga = costs.filter(c => c?.type === "tenaga").length > 0;
+  const hasLain = costs.filter(c => c?.type === "indirect").length > 0;
   const completedSteps = [hasBahan, hasTenaga, hasLain].filter(Boolean).length;
+  // ─── HELPER: Margin Meta ──────────────────────────────────────────────────────
+  const getMarginMeta = (margin: number) => {
+    if (margin >= 30) return { label: "Sihat", dot: "#4ade80", color: "#15803d" };
+    if (margin >= 15) return { label: "Sederhana", dot: "#fbbf24", color: "#b45309" };
+    return { label: "Rendah", dot: "#fca5a5", color: "#dc2626" };
+  };
 
-  // FIXED: header uses Net Profit Margin (37%), not CM Ratio (69%)
   const marginMeta = getMarginMeta(cvp.netProfitMarginPct);
-
-  // BEP display values
-  const bepUnitsCeil  = cvp.bepUnits === Infinity ? Infinity : Math.ceil(cvp.bepUnits);
+  const bepUnitsCeil = cvp.bepUnits === Infinity ? Infinity : Math.ceil(cvp.bepUnits);
   const bepRevDisplay = cvp.bepRevenue === Infinity ? "N/A" : `RM ${cvp.bepRevenue.toFixed(2)}`;
-  const bepBarFill    = unitsProduced > 0 && bepUnitsCeil !== Infinity
+  const bepBarFill = unitsProduced > 0 && bepUnitsCeil !== Infinity
     ? Math.min(100, (bepUnitsCeil / unitsProduced) * 100) : 100;
 
   // ── HANDLERS ─────────────────────────────────────────────────────────────
@@ -857,13 +915,22 @@ export default function ProductDetailPage() {
                 </div>
 
                 {/* Cost info strip */}
-                <div className="pd-cost-info-row">
-                  <strong>Kos Tetap/Batch:</strong> RM {cvp.totalFixedCost.toFixed(2)}
-                  &nbsp;&nbsp;·&nbsp;&nbsp;
-                  <strong>Kos Berubah Total:</strong> RM {cvp.totalVariableCost.toFixed(2)}
-                  &nbsp;&nbsp;·&nbsp;&nbsp;
-                  <strong>Jumlah Kos Batch:</strong> RM {cvp.totalBatchCost.toFixed(2)}
-                </div>
+                  <div className="pd-cost-info-row">
+                    <strong>Kos Tetap/Batch:</strong> RM {cvp.totalFixedCost.toFixed(2)}
+                    &nbsp;&nbsp;·&nbsp;&nbsp;
+                    <strong>Kos Berubah Total:</strong> RM {cvp.totalVariableCost.toFixed(2)}
+                    &nbsp;&nbsp;·&nbsp;&nbsp;
+                    <strong>Jumlah Kos Batch:</strong> RM {cvp.totalBatchCost.toFixed(2)}
+                  </div>
+
+                  {/* NEW: Shared Fixed Cost Info */}
+                  {sharedFixedCost > 0 && (
+                    <div className="pd-cost-info-row" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+                      <strong>📌 Kos Tetap Dikongsi:</strong> RM {sharedFixedCost.toFixed(2)} (dari SEMUA produk)
+                      &nbsp;&nbsp;·&nbsp;&nbsp;
+                      <strong>Bahagian produk ini ({salesMixPct.toFixed(1)}%):</strong> RM {cvp.allocatedFixedCost.toFixed(2)}
+                    </div>
+                  )}
 
                 {/* Profit / Loss banner */}
                 {sellingPrice > 0 && (
