@@ -5,12 +5,16 @@ import { useRouter } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { matchFoodImage } from "@/lib/foodImages";
 
+const SALE_UNIT_OPTIONS = ["Unit", "Slice", "Whole", "Box", "Pack", "Kg", "Gram"];
+
 export default function TambahProdukPage() {
   const router = useRouter();
   const [form, setForm] = useState({
     name: "",
     description: "",
     selling_price: "",
+    sale_unit: "Unit",
+    custom_sale_unit: "",
   });
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -26,6 +30,11 @@ export default function TambahProdukPage() {
   const handleNameBlur = () => {
     setFocusedField(null);
     if (form.name.trim()) fetchImage(form.name);
+  };
+
+  const getSaleUnit = () => {
+    if (form.custom_sale_unit.trim()) return form.custom_sale_unit.trim();
+    return form.sale_unit;
   };
 
   const handleSubmit = async () => {
@@ -49,11 +58,11 @@ export default function TambahProdukPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          name:          form.name,
-          description:   form.description,
+          name: form.name,
+          description: form.description,
           selling_price: parseFloat(form.selling_price),
-          // margin_percentage intentionally NOT sent — auto-calculated from costs
-          image_url:     imageUrl,
+          image_url: imageUrl,
+          sale_unit: getSaleUnit(),
         }),
       });
 
@@ -70,6 +79,7 @@ export default function TambahProdukPage() {
   };
 
   const priceVal = parseFloat(form.selling_price) || 0;
+  const displayUnit = getSaleUnit();
 
   return (
     <>
@@ -86,7 +96,6 @@ export default function TambahProdukPage() {
           -webkit-font-smoothing: antialiased;
         }
 
-        /* ── HEADER ── */
         .tp-header {
           background: linear-gradient(145deg, #1a56db 0%, #2563eb 60%, #3b82f6 100%);
           padding: 52px 20px 72px;
@@ -148,7 +157,6 @@ export default function TambahProdukPage() {
           font-weight: 500;
         }
 
-        /* Live preview pill in header */
         .tp-preview-pill {
           position: relative;
           z-index: 1;
@@ -171,7 +179,6 @@ export default function TambahProdukPage() {
           letter-spacing: 0.01em;
         }
 
-        /* ── BODY ── */
         .tp-body {
           margin-top: -36px;
           padding: 0 16px;
@@ -179,7 +186,6 @@ export default function TambahProdukPage() {
           z-index: 10;
         }
 
-        /* ── IMAGE CARD ── */
         .tp-img-card {
           background: #fff;
           border-radius: 20px;
@@ -274,7 +280,6 @@ export default function TambahProdukPage() {
         .tp-refresh-btn:hover { background: #dbeafe; }
         .tp-refresh-btn:active { transform: scale(0.95); }
 
-        /* ── INFO BANNER ── */
         .tp-info-banner {
           display: flex;
           align-items: flex-start;
@@ -302,7 +307,6 @@ export default function TambahProdukPage() {
         }
         .tp-info-text strong { font-weight: 700; }
 
-        /* ── FORM CARDS ── */
         .tp-form-card {
           background: #fff;
           border-radius: 20px;
@@ -378,7 +382,62 @@ export default function TambahProdukPage() {
         }
         .tp-textarea::placeholder { color: #cbd5e1; font-weight: 400; }
 
-        /* ── NEXT STEPS CARD ── */
+        /* ── SALE UNIT PILLS ── */
+        .tp-unit-grid {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-bottom: 8px;
+        }
+        .tp-unit-pill {
+          padding: 6px 14px;
+          border-radius: 99px;
+          font-size: 12px;
+          font-weight: 700;
+          border: 1.5px solid #e2e8f0;
+          background: #fff;
+          color: #64748b;
+          cursor: pointer;
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          transition: all 0.15s;
+        }
+        .tp-unit-pill:hover { border-color: #93c5fd; }
+        .tp-unit-pill.active {
+          background: #1a56db;
+          color: #fff;
+          border-color: transparent;
+        }
+        .tp-unit-pill.custom {
+          border-style: dashed;
+          border-color: #cbd5e1;
+        }
+        .tp-unit-pill.custom.active {
+          border-style: solid;
+          border-color: #1a56db;
+        }
+        .tp-unit-custom-input {
+          margin-top: 6px;
+          padding: 8px 12px;
+          border-radius: 10px;
+          border: 1.5px solid #e2e8f0;
+          font-size: 13px;
+          font-weight: 500;
+          color: #1e293b;
+          background: #fafbfc;
+          outline: none;
+          width: 100%;
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          transition: border-color 0.2s;
+        }
+        .tp-unit-custom-input:focus {
+          border-color: #93c5fd;
+          background: #fff;
+        }
+        .tp-unit-custom-input::placeholder {
+          color: #cbd5e1;
+          font-weight: 400;
+        }
+
         .tp-steps-card {
           background: #fff;
           border-radius: 20px;
@@ -414,7 +473,6 @@ export default function TambahProdukPage() {
         .tp-step-label { font-size: 12px; font-weight: 600; color: #475569; }
         .tp-step-sub { font-size: 11px; color: #94a3b8; margin-top: 1px; }
 
-        /* ── ERROR ── */
         .tp-error {
           display: flex;
           align-items: center;
@@ -435,7 +493,6 @@ export default function TambahProdukPage() {
         }
         .tp-error-text { font-size: 13px; font-weight: 600; color: #ef4444; line-height: 1.4; }
 
-        /* ── SUBMIT BUTTON ── */
         .tp-submit-btn {
           width: 100%;
           padding: 16px;
@@ -495,7 +552,6 @@ export default function TambahProdukPage() {
             </div>
           </div>
 
-          {/* Live preview pills */}
           <div className="tp-preview-pill">
             {form.name && (
               <div className="tp-pill">{form.name}</div>
@@ -505,7 +561,7 @@ export default function TambahProdukPage() {
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>
                 </svg>
-                RM {priceVal.toFixed(2)} / unit
+                RM {priceVal.toFixed(2)} / {displayUnit || "unit"}
               </div>
             )}
           </div>
@@ -514,7 +570,6 @@ export default function TambahProdukPage() {
         {/* ── BODY ── */}
         <div className="tp-body">
 
-          {/* Error */}
           {error && (
             <div className="tp-error">
               <div className="tp-error-icon">
@@ -524,7 +579,6 @@ export default function TambahProdukPage() {
             </div>
           )}
 
-          {/* Info banner — explains why no margin field */}
           <div className="tp-info-banner">
             <div className="tp-info-icon">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -605,11 +659,60 @@ export default function TambahProdukPage() {
             />
           </div>
 
-          {/* Harga Jual */}
-          <div className={`tp-form-card tp-delay-3 ${focusedField === "price" ? "focused" : ""}`}>
+          {/* Unit Jualan */}
+          <div className={`tp-form-card tp-delay-3 ${focusedField === "unit" ? "focused" : ""}`}
+               onFocus={() => setFocusedField("unit")}
+               onBlur={() => setFocusedField(null)}>
             <div className="tp-field-label">
               <div className="tp-field-label-dot" />
-              Harga Jual Per Unit <span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
+              Unit Jualan <span style={{ fontSize: 9, color: "#cbd5e1", marginLeft: 4 }}>PILIHAN</span>
+            </div>
+            <div className="tp-unit-grid">
+              {SALE_UNIT_OPTIONS.map((unit) => {
+                const isActive = form.sale_unit === unit && !form.custom_sale_unit.trim();
+                return (
+                  <button
+                    key={unit}
+                    type="button"
+                    className={`tp-unit-pill ${isActive ? "active" : ""}`}
+                    onClick={() => {
+                      setForm({ ...form, sale_unit: unit, custom_sale_unit: "" });
+                    }}
+                  >
+                    {unit}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                className={`tp-unit-pill custom ${form.custom_sale_unit.trim() ? "active" : ""}`}
+                onClick={() => {
+                  setForm({ ...form, sale_unit: "Custom" });
+                  document.getElementById("customUnitInput")?.focus();
+                }}
+              >
+                ✏️ Custom
+              </button>
+            </div>
+            <input
+              id="customUnitInput"
+              className="tp-unit-custom-input"
+              placeholder="cth: Loyang, Paket, Bekas..."
+              value={form.custom_sale_unit}
+              onChange={(e) => {
+                setForm({ ...form, custom_sale_unit: e.target.value, sale_unit: "Custom" });
+              }}
+            />
+            <div style={{ marginTop: 6, fontSize: 10, color: "#94a3b8", fontWeight: 500 }}>
+              Contoh: &quot;Slice&quot; = harga per potong, &quot;Whole&quot; = harga sekeping/loyang
+            </div>
+          </div>
+
+          {/* Harga Jual */}
+          <div className={`tp-form-card tp-delay-4 ${focusedField === "price" ? "focused" : ""}`}>
+            <div className="tp-field-label">
+              <div className="tp-field-label-dot" />
+              Harga Jual <span style={{ color: "#ef4444", marginLeft: 2 }}>*</span>
             </div>
             <div className="tp-input-row">
               <span className="tp-input-prefix">RM</span>
@@ -622,6 +725,9 @@ export default function TambahProdukPage() {
                 onFocus={() => setFocusedField("price")}
                 onBlur={() => setFocusedField(null)}
               />
+              <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 500, whiteSpace: "nowrap" }}>
+                / {displayUnit || "unit"}
+              </span>
             </div>
             {priceVal > 0 && (
               <div style={{ marginTop: 8, fontSize: 11, color: "#94a3b8", fontWeight: 500 }}>
@@ -637,7 +743,7 @@ export default function TambahProdukPage() {
               <div className="tp-step-num">1</div>
               <div>
                 <div className="tp-step-label">Simpan produk ini ✅</div>
-                <div className="tp-step-sub">Nama + harga jual sahaja diperlukan</div>
+                <div className="tp-step-sub">Nama + harga jual + unit jualan</div>
               </div>
             </div>
             <div className="tp-step-item">

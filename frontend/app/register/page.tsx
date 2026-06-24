@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
 import { API_URL } from "@/lib/api";
@@ -12,6 +12,7 @@ import { auth, provider } from "@/lib/firebase";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -19,35 +20,87 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // ─── INVITE DETECTION ────────────────────────────────────────────────
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [businessId, setBusinessId] = useState<string | null>(null);
+  const [isInviteValid, setIsInviteValid] = useState<boolean | null>(null);
+  const [verifyingInvite, setVerifyingInvite] = useState(true);
+
+  useEffect(() => {
+    const token = searchParams.get("invite");
+    const business = searchParams.get("business");
+
+    if (token && business) {
+      setInviteToken(token);
+      setBusinessId(business);
+      verifyInvite(token, business);
+    } else {
+      setVerifyingInvite(false);
+    }
+  }, [searchParams]);
+
+  const verifyInvite = async (token: string, business: string) => {
+    try {
+      const res = await axios.get(`${API_URL}/invites/verify`, {
+        params: { token, business },
+      });
+      if (res.data.valid) {
+        setIsInviteValid(true);
+        toast.success("Pautan jemputan sah! Sila daftar sebagai staff.");
+      } else {
+        setIsInviteValid(false);
+        toast.error("Pautan tidak sah atau sudah tamat tempoh.");
+      }
+    } catch (err) {
+      setIsInviteValid(false);
+      toast.error("Pautan jemputan tidak sah.");
+    } finally {
+      setVerifyingInvite(false);
+    }
+  };
+
+  // ─── REGISTER HANDLER ──────────────────────────────────────────────────
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!name || !email || !password) {
-      toast.error("All fields are required");
+      toast.error("Semua ruangan perlu diisi.");
       return;
     }
 
     if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+      toast.error("Kata laluan mesti sekurang-kurangnya 6 aksara.");
       return;
     }
 
     setLoading(true);
 
     try {
-      await axios.post(`${API_URL}/register`, {
+      const payload: any = {
         name,
         email,
         password,
-      });
+      };
 
-      toast.success("Akaun berjaya dicipta!");
+      // Jika ada invite token, hantar bersama
+      if (inviteToken && businessId && isInviteValid) {
+        payload.inviteToken = inviteToken;
+        payload.businessId = businessId;
+      }
+
+      const res = await axios.post(`${API_URL}/register`, payload);
+
+      if (res.data.user.role === "staff") {
+        toast.success("Anda berjaya didaftarkan sebagai staff!");
+      } else {
+        toast.success("Akaun berjaya dicipta!");
+      }
 
       setTimeout(() => {
         router.push("/login");
       }, 800);
     } catch (err) {
-      let message = "Server error. Try again.";
+      let message = "Ralat server. Sila cuba lagi.";
       if (axios.isAxiosError(err)) {
         message = err.response?.data?.message || message;
       }
@@ -57,6 +110,7 @@ export default function RegisterPage() {
     }
   };
 
+  // ─── GOOGLE REGISTER ──────────────────────────────────────────────────
   const handleGoogleRegister = async () => {
     try {
       setLoading(true);
@@ -65,28 +119,32 @@ export default function RegisterPage() {
       const firebaseUser = result.user;
       const idToken = await firebaseUser.getIdToken();
 
-      // /auth/google on your backend auto-registers if user doesn't exist
-      const res = await axios.post(`${API_URL}/auth/google`, {
-        token: idToken,
-      });
+      let payload: any = { token: idToken };
+      if (inviteToken && businessId && isInviteValid) {
+        payload.inviteToken = inviteToken;
+        payload.businessId = businessId;
+      }
+
+      const res = await axios.post(`${API_URL}/auth/google`, payload);
 
       const user = res.data.user;
-
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(user));
 
-      toast.success("Akaun Google berjaya dibuat!");
+      toast.success(user.role === "staff" ? "Staff berjaya didaftarkan!" : "Akaun berjaya dibuat!");
 
       setTimeout(() => {
         if (user.role === "admin") {
           router.push("/dashboard");
+        } else if (user.role === "staff") {
+          router.push("/staff-dashboard");
         } else {
           router.push("/home");
         }
       }, 500);
     } catch (err) {
       console.error(err);
-      let message = "Google sign-up failed";
+      let message = "Google sign-up gagal";
       if (axios.isAxiosError(err)) {
         message = err.response?.data?.message || message;
       }
@@ -95,6 +153,41 @@ export default function RegisterPage() {
       setLoading(false);
     }
   };
+
+  // ─── RENDER ──────────────────────────────────────────────────────────────
+
+  // Show loading while verifying invite
+  if (verifyingInvite) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#d6eeff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ background: "#eef6ff", padding: 40, borderRadius: 24, textAlign: "center" }}>
+          <div style={{ width: 34, height: 34, borderRadius: "50%", border: "3px solid #dbeafe", borderTopColor: "#2563eb", animation: "spin 0.75s linear infinite", margin: "0 auto 16px" }} />
+          <p style={{ color: "#1e3a5f", fontFamily: "Plus Jakarta Sans, sans-serif" }}>Memeriksa pautan jemputan...</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error if invite invalid
+  if (inviteToken && !isInviteValid) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#d6eeff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ background: "#eef6ff", padding: 40, borderRadius: 24, maxWidth: 400, textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+          <h2 style={{ color: "#dc2626", fontFamily: "Plus Jakarta Sans, sans-serif", marginBottom: 8 }}>Pautan Tidak Sah</h2>
+          <p style={{ color: "#4a7ead", fontFamily: "Plus Jakarta Sans, sans-serif" }}>
+            Pautan jemputan ini telah tamat tempoh atau tidak sah.
+            <br />
+            Sila hubungi pemilik perniagaan untuk pautan baharu.
+          </p>
+          <Link href="/login" style={{ display: "inline-block", marginTop: 16, color: "#3b82f6", fontWeight: 600, textDecoration: "none" }}>
+            Kembali ke Log Masuk →
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -140,17 +233,6 @@ export default function RegisterPage() {
           z-index: 0;
         }
 
-        body::after {
-          content: '';
-          position: fixed;
-          width: 420px; height: 420px;
-          top: -100px; right: -120px;
-          border-radius: 50%;
-          background: radial-gradient(circle, #bfdbfe55 0%, transparent 70%);
-          pointer-events: none;
-          z-index: 0;
-        }
-
         .blob-bottom {
           position: fixed;
           width: 320px; height: 320px;
@@ -177,6 +259,21 @@ export default function RegisterPage() {
         @keyframes cardIn {
           from { opacity: 0; transform: translateY(28px) scale(0.97); }
           to   { opacity: 1; transform: translateY(0)   scale(1); }
+        }
+
+        .invite-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          background: #dbeafe;
+          border: 1px solid #93c5fd;
+          border-radius: 99px;
+          padding: 6px 14px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #1d4ed8;
+          margin-bottom: 16px;
+          width: fit-content;
         }
 
         .illustration-wrap {
@@ -276,7 +373,6 @@ export default function RegisterPage() {
         }
         .pw-toggle:hover { color: var(--accent); }
 
-        /* ---- OR divider ---- */
         .or-divider {
           display: flex;
           align-items: center;
@@ -299,7 +395,6 @@ export default function RegisterPage() {
           text-transform: uppercase;
         }
 
-        /* ---- submit button ---- */
         .btn-submit {
           width: 100%;
           padding: 13px;
@@ -328,7 +423,6 @@ export default function RegisterPage() {
         .btn-submit:active:not(:disabled) { transform: translateY(0); }
         .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; }
 
-        /* ---- Google button ---- */
         .btn-google {
           width: 100%;
           padding: 12px;
@@ -433,8 +527,19 @@ export default function RegisterPage() {
         {/* Step badge */}
         <div className="step-badge">
           <span className="step-dot" />
-          Cipta Akaun Baru
+          {inviteToken ? "Daftar Sebagai Staff" : "Cipta Akaun Baru"}
         </div>
+
+        {/* Invite Badge */}
+        {inviteToken && isInviteValid && (
+          <div className="invite-badge">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <polyline points="9 12 11 14 15 10" />
+            </svg>
+            Anda dijemput menyertai perniagaan sebagai Staff
+          </div>
+        )}
 
         {/* Illustration */}
         <div className="illustration-wrap">
@@ -453,9 +558,13 @@ export default function RegisterPage() {
 
         {/* Greeting */}
         <h1 className="greeting">
-          Buat <em>Akaun</em> Anda
+          {inviteToken ? "Sertai Pasukan" : "Buat <em>Akaun</em> Anda"}
         </h1>
-        <p className="slogan">Jom mula kira kos dengan lebih sistematik</p>
+        <p className="slogan">
+          {inviteToken
+            ? "Daftar sebagai staff untuk mula bekerja"
+            : "Jom mula kira kos dengan lebih sistematik"}
+        </p>
 
         <hr className="divider" />
 
@@ -548,7 +657,7 @@ export default function RegisterPage() {
                   <line x1="19" y1="8" x2="19" y2="14"/>
                   <line x1="22" y1="11" x2="16" y2="11"/>
                 </svg>
-                <span>Daftar Sekarang</span>
+                <span>{inviteToken ? "Daftar Sebagai Staff" : "Daftar Sekarang"}</span>
               </>
             )}
           </button>
@@ -571,7 +680,7 @@ export default function RegisterPage() {
               <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.5-5.3l-6.2-5.2C29.3 35 26.8 36 24 36c-5.2 0-9.6-3.3-11.2-8l-6.5 5C9.5 39.5 16.2 44 24 44z"/>
               <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1 2.8-3 5.1-5.8 6.5l6.2 5.2C39.8 35.9 44 30.6 44 24c0-1.3-.1-2.3-.4-3.5z"/>
             </svg>
-            Daftar Dengan Google
+            {inviteToken ? "Daftar Staff Dengan Google" : "Daftar Dengan Google"}
           </button>
 
         </form>

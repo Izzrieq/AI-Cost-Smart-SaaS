@@ -15,6 +15,7 @@ interface Product {
   margin_percentage: number;
   image_url: string | null;
   created_at: string;
+  sale_unit?: string; // NEW: e.g., "slice", "whole", "box", "pack"
 }
 
 const getMarginMeta = (margin: number) => {
@@ -94,7 +95,6 @@ export default function ProdukPage() {
           -webkit-font-smoothing: antialiased;
         }
 
-        /* ── HEADER ── */
         .pp-header {
           background: linear-gradient(145deg, #1a56db 0%, #2563eb 60%, #3b82f6 100%);
           padding: 52px 20px 72px;
@@ -161,7 +161,6 @@ export default function ProdukPage() {
         .pp-add-btn:hover { background: rgba(255,255,255,0.26); }
         .pp-add-btn:active { transform: scale(0.96); }
 
-        /* Search bar floating over header */
         .pp-search-wrap {
           position: relative;
           z-index: 1;
@@ -198,7 +197,6 @@ export default function ProdukPage() {
         }
         .pp-search-clear:hover { background: #e2e8f0; }
 
-        /* ── BODY pulled up ── */
         .pp-body {
           margin-top: -36px;
           padding: 0 16px;
@@ -206,7 +204,6 @@ export default function ProdukPage() {
           z-index: 10;
         }
 
-        /* Stats strip */
         .pp-stats-strip {
           display: flex;
           gap: 8px;
@@ -258,7 +255,6 @@ export default function ProdukPage() {
         .pp-stat-chip.active .pp-stat-chip-label { color: #2563eb; }
         .pp-stat-chip.active .pp-stat-chip-count { background: #eff6ff; color: #1d4ed8; }
 
-        /* Section header */
         .pp-section-header {
           display: flex;
           align-items: center;
@@ -278,7 +274,6 @@ export default function ProdukPage() {
           color: #94a3b8;
         }
 
-        /* ── PRODUCT GRID ── */
         .pp-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -347,11 +342,18 @@ export default function ProdukPage() {
           font-size: 13px;
           font-weight: 700;
           color: #1e293b;
-          margin-bottom: 8px;
+          margin-bottom: 4px;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
           letter-spacing: -0.01em;
+        }
+        .pp-card-price-unit {
+          font-size: 11px;
+          font-weight: 600;
+          color: #94a3b8;
+          margin-bottom: 6px;
+          letter-spacing: 0.01em;
         }
         .pp-card-footer {
           display: flex;
@@ -385,7 +387,6 @@ export default function ProdukPage() {
         }
         .pp-card:hover .pp-card-arrow { background: #eff6ff; }
 
-        /* ── EMPTY STATE ── */
         .pp-empty {
           background: #fff;
           border: 2px dashed #e2e8f0;
@@ -436,7 +437,6 @@ export default function ProdukPage() {
         }
         .pp-empty-cta:hover { background: #dbeafe; }
 
-        /* ── LOADING ── */
         .pp-loading {
           min-height: 100vh;
           background: #f5f7fa;
@@ -455,7 +455,6 @@ export default function ProdukPage() {
           animation: spin 0.75s linear infinite;
         }
 
-        /* Animations */
         @keyframes fadeUp {
           from { opacity: 0; transform: translateY(10px); }
           to   { opacity: 1; transform: translateY(0); }
@@ -607,6 +606,8 @@ export default function ProdukPage() {
               <div className="pp-grid pp-fade-3">
                 {filtered.map((product, idx) => {
                   const meta = getMarginMeta(product.margin_percentage);
+                  // Display unit: use sale_unit if available, otherwise default to "unit"
+                  const unit = product.sale_unit || "unit";
                   return (
                     <div
                       key={product.product_id}
@@ -629,6 +630,9 @@ export default function ProdukPage() {
                       {/* Body */}
                       <div className="pp-card-body">
                         <div className="pp-card-name">{product.name}</div>
+                        <div className="pp-card-price-unit">
+                          / {unit}
+                        </div>
                         <div className="pp-card-footer">
                           <div
                             className="pp-margin-badge"

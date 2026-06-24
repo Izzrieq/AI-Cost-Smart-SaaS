@@ -49,58 +49,52 @@ const IconInfo     = () => <svg width="14" height="14" viewBox="0 0 24 24" fill=
 const IconArrowRight = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" strokeLinecap="round"><path d="M9 18l6-6-6-6"/></svg>;
 const IconShield   = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>;
 const IconTarget   = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>;
+const IconEdit     = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
+
+// ─── CONVERT TO BASE UNIT (grams / ml) ─────────────────────────────────────
+const convertToBaseUnit = (qty: number, unit: string): number => {
+  if (unit === "kg") return qty * 1000;
+  if (unit === "L") return qty * 1000;
+  return qty; // g, ml, unit remain as-is
+};
+
+// ─── GET BASE UNIT DISPLAY NAME ────────────────────────────────────────────
+const getBaseUnitDisplay = (unit: string): string => {
+  if (unit === "kg" || unit === "g") return "g";
+  if (unit === "L" || unit === "ml") return "ml";
+  return "unit";
+};
+
+// ─── GET MINIMUM QUANTITY PER UNIT ─────────────────────────────────────────
+const getMinQuantity = (unit: string): number => {
+  if (unit === 'g' || unit === 'ml') return 2;
+  if (unit === 'kg' || unit === 'L') return 0.002; // 2g / 2ml
+  return 1; // unit
+};
 
 // ─── CVP CALCULATOR ───────────────────────────────────────────────────────────
-//
-//  All formulas (Single Product CVP):
-//
-//  Variable Cost/unit    = Total Variable Cost / units_produced
-//  Fixed Cost/batch      = sum costs where behavior="fixed"
-//  Total Batch Cost      = Variable + Fixed
-//  Total Cost/unit       = Total Batch Cost / units_produced         ← Kos Seunit
-//
-//  CM/unit               = Selling Price − Variable Cost/unit        ← CVP core
-//  CM Ratio %            = CM/unit / Selling Price × 100             ← shown as secondary
-//
-//  Net Profit Margin %   = (SP − Total Cost/unit) / SP × 100        ← HEADER (SME friendly)
-//
-//  Min Selling Price     = Total Batch Cost / units_produced         ← same as Total Cost/unit
-//  BEP units             = Fixed Cost / CM/unit                      ← uses Math.ceil for display
-//  BEP Revenue           = Math.ceil(BEP units) × Selling Price      ← FIXED: use ceil not float
-//
-//  Safety Margin units   = units_produced − ceil(BEP units)
-//  Safety Margin %       = Safety units / units_produced × 100
-//
-//  Net Profit/batch      = (CM/unit × units_produced) − Fixed Cost
 const calcCVP = (
   productions: Production[],
   costs: Cost[],
   sellingPrice: number,
   unitsProduced: number,
-  sharedFixedCost: number = 0,  // NEW: global fixed costs from all products
-  salesMixPct: number = 100,    // NEW: this product's % of total sales
+  sharedFixedCost: number = 0,
+  salesMixPct: number = 100,
 ) => {
-  // If no shared fixed cost provided, use the product's own fixed costs (fallback)
   const variableCosts = costs.filter((c) => c.behavior === "variable");
   const fixedCosts = costs.filter((c) => c.behavior === "fixed");
   
-  // Product's own fixed costs (for display)
   const ownFixedCost = fixedCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-  
-  // SHARED fixed cost allocated to this product based on sales mix
   const allocatedFixedCost = sharedFixedCost * (salesMixPct / 100);
-  
-  // Use the LARGER of own fixed cost or allocated shared fixed cost
-  // This ensures products without fixed costs still show the shared ones
-  const totalFixedCost = Math.max(ownFixedCost, allocatedFixedCost);
+  const totalFixedCost = ownFixedCost + allocatedFixedCost;
   
   const bahanTotal = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
   const totalVariableCostOther = variableCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-
   const totalVariableCost = bahanTotal + totalVariableCostOther;
   const variableCostPerUnit = unitsProduced > 0 ? totalVariableCost / unitsProduced : 0;
+  
   const totalBatchCost = totalVariableCost + totalFixedCost;
-  const costPerUnitTotal = totalBatchCost / unitsProduced;
+  const costPerUnitTotal = unitsProduced > 0 ? totalBatchCost / unitsProduced : 0;
   const minSellingPrice = costPerUnitTotal;
 
   const cmPerUnit = sellingPrice - variableCostPerUnit;
@@ -117,29 +111,48 @@ const calcCVP = (
   const netProfitBatch = (cmPerUnit * unitsProduced) - totalFixedCost;
 
   return {
-    variableCostPerUnit, 
-    fixedCostPerBatch: totalFixedCost,  // Now shows SHARED fixed cost
-    ownFixedCost,                       // NEW: product's own fixed costs
-    allocatedFixedCost,                 // NEW: allocated from shared pool
+    variableCostPerUnit,
+    fixedCostPerBatch: totalFixedCost,
+    ownFixedCost,
+    allocatedFixedCost,
+    sharedFixedCostTotal: sharedFixedCost,
     totalVariableCost,
     totalFixedCost,
-    totalBatchCost, 
-    cmPerUnit, 
+    totalBatchCost,
+    cmPerUnit,
     cmRatio,
-    netProfitMarginPct, 
-    bepUnits: bepUnitsRaw, 
+    netProfitMarginPct,
+    bepUnits: bepUnitsRaw,
     bepRevenue,
-    costPerUnitTotal, 
-    minSellingPrice, 
+    costPerUnitTotal,
+    minSellingPrice,
     safetyMarginUnits,
-    safetyMarginPct, 
-    netProfitBatch, 
+    safetyMarginPct,
+    netProfitBatch,
     isProfitable: cmPerUnit > 0,
   };
 };
 
-// ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const getMarginMeta = (margin: number) => {
+  if (margin >= 30) return { label: "Sihat", dot: "#4ade80", color: "#15803d" };
+  if (margin >= 15) return { label: "Sederhana", dot: "#fbbf24", color: "#b45309" };
+  return { label: "Rendah", dot: "#fca5a5", color: "#dc2626" };
+};
 
+const getStep = (unit: string) => {
+  if (unit === 'kg' || unit === 'L') return 0.001;
+  return 1;
+};
+
+const formatQuantityDisplay = (qty: number | string, unit: string) => {
+  const num = typeof qty === 'string' ? parseFloat(qty) : qty;
+  if (isNaN(num)) return '0';
+  if (unit === 'kg' || unit === 'L') return num.toFixed(3);
+  return num.toFixed(0);
+};
+
+// ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function ProductDetailPage() {
   const router = useRouter();
   const { product_id } = useParams();
@@ -162,9 +175,28 @@ export default function ProductDetailPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingItem, setDeletingItem] = useState(false);
 
-  // ── NEW: Shared fixed costs state ──
+  // Shared fixed costs
   const [sharedFixedCost, setSharedFixedCost] = useState<number>(0);
   const [allProductsData, setAllProductsData] = useState<{ product_id: string; units: number }[]>([]);
+
+  // Edit price modal
+  const [showEditPriceModal, setShowEditPriceModal] = useState(false);
+  const [tempPrice, setTempPrice] = useState<number>(0);
+  const [updatingPrice, setUpdatingPrice] = useState(false);
+
+  // ── TOAST STATE ──
+  const [toast, setToast] = useState<{ message: string; type: "error" | "info" | "success"; visible: boolean }>({
+    message: "",
+    type: "info",
+    visible: false,
+  });
+
+  const showToast = (message: string, type: "error" | "info" | "success" = "error") => {
+    setToast({ message, type, visible: true });
+    setTimeout(() => {
+      setToast((prev) => ({ ...prev, visible: false }));
+    }, 3500);
+  };
 
   const [costForm, setCostForm] = useState({ name: "", behavior: "fixed", cost_per_unit: "", total_cost: "" });
   const [prodForm, setProdForm] = useState({
@@ -179,21 +211,17 @@ export default function ProductDetailPage() {
 
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-  // ── UPDATED FETCH: Collect ALL fixed costs from ALL products ──
+  // ── FETCH ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        // First, fetch ALL products to get their fixed costs
-        const allProdRes = await fetch(`${API_URL}/products`, { 
-          headers: { Authorization: `Bearer ${token}` } 
-        });
+        const allProdRes = await fetch(`${API_URL}/products`, { headers: { Authorization: `Bearer ${token}` } });
         const allProdData = await allProdRes.json();
         const allProducts: Product[] = allProdData.products || [];
 
         let totalFixedCost = 0;
         const productsWithUnits: { product_id: string; units: number }[] = [];
 
-        // Collect fixed costs from ALL products
         for (const p of allProducts) {
           const [costsRes, prodsRes] = await Promise.all([
             fetch(`${API_URL}/products/${p.product_id}/costs`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -204,14 +232,12 @@ export default function ProductDetailPage() {
           const costs: Cost[] = costsData.costs || [];
           const productions: Production[] = prodsData.productions || [];
 
-          // Calculate units produced for this product
           const units = productions.length > 0
             ? Math.max(...productions.map(pr => Number(pr.units_produced) || 0).filter(n => n > 0), 0) || 1
             : 1;
           
           productsWithUnits.push({ product_id: p.product_id, units });
 
-          // Add fixed costs from this product to the global pool
           const fixedFromProduct = costs
             .filter(c => c.behavior === "fixed")
             .reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
@@ -221,7 +247,6 @@ export default function ProductDetailPage() {
         setSharedFixedCost(totalFixedCost);
         setAllProductsData(productsWithUnits);
 
-        // Now fetch the current product's data
         const [prodRes, costsRes, prodsRes] = await Promise.all([
           fetch(`${API_URL}/products/${product_id}`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${API_URL}/products/${product_id}/costs`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -238,21 +263,18 @@ export default function ProductDetailPage() {
     fetchAll();
   }, [product_id]);
 
-  // ── DERIVED CVP with SHARED FIXED COSTS ──────────────────────────────────
+  // ── DERIVED ──────────────────────────────────────────────────────────────
   const latestBatch = productions.length > 0 ? productions[0] : null;
   const unitsProduced = latestBatch
     ? Math.max(...productions.map(p => Number(p.units_produced) || 0).filter(n => n > 0), 0) || 1
     : 1;
   const sellingPrice = parseFloat(String(product?.selling_price ?? 0));
 
-  // Calculate sales mix for this product
   const totalUnits = allProductsData.reduce((sum, p) => sum + p.units, 0);
   const salesMixPct = totalUnits > 0 ? (unitsProduced / totalUnits) * 100 : 100;
 
-  // Use the UPDATED calcCVP with shared fixed costs
   const cvp = calcCVP(productions, costs, sellingPrice, unitsProduced, sharedFixedCost, salesMixPct);
 
-  // Rest of your calculations remain the same
   const bahanTotal = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
   const tenagaTotal = costs.filter(c => c?.type === "tenaga").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
   const lainTotal = costs.filter(c => c?.type === "indirect").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
@@ -261,12 +283,6 @@ export default function ProductDetailPage() {
   const hasTenaga = costs.filter(c => c?.type === "tenaga").length > 0;
   const hasLain = costs.filter(c => c?.type === "indirect").length > 0;
   const completedSteps = [hasBahan, hasTenaga, hasLain].filter(Boolean).length;
-  // ─── HELPER: Margin Meta ──────────────────────────────────────────────────────
-  const getMarginMeta = (margin: number) => {
-    if (margin >= 30) return { label: "Sihat", dot: "#4ade80", color: "#15803d" };
-    if (margin >= 15) return { label: "Sederhana", dot: "#fbbf24", color: "#b45309" };
-    return { label: "Rendah", dot: "#fca5a5", color: "#dc2626" };
-  };
 
   const marginMeta = getMarginMeta(cvp.netProfitMarginPct);
   const bepUnitsCeil = cvp.bepUnits === Infinity ? Infinity : Math.ceil(cvp.bepUnits);
@@ -274,7 +290,47 @@ export default function ProductDetailPage() {
   const bepBarFill = unitsProduced > 0 && bepUnitsCeil !== Infinity
     ? Math.min(100, (bepUnitsCeil / unitsProduced) * 100) : 100;
 
-  // ── HANDLERS ─────────────────────────────────────────────────────────────
+  // ── EDIT PRICE HANDLERS ──────────────────────────────────────────────────
+  const openEditPriceModal = () => {
+    setTempPrice(sellingPrice);
+    setShowEditPriceModal(true);
+  };
+
+  const handleUpdatePrice = async () => {
+    if (!product) return;
+    if (tempPrice <= 0) {
+      showToast("Harga jual mesti lebih daripada 0.", "error");
+      return;
+    }
+    setUpdatingPrice(true);
+    try {
+      const res = await fetch(`${API_URL}/products/${product_id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: product.name,
+          description: product.description,
+          selling_price: tempPrice,
+          image_url: product.image_url,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setProduct(data.product);
+        setShowEditPriceModal(false);
+        showToast("Harga jual berjaya dikemaskini.", "success");
+      } else {
+        showToast(data.message || "Gagal mengemaskini harga.", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Ralat rangkaian. Sila cuba lagi.", "error");
+    } finally {
+      setUpdatingPrice(false);
+    }
+  };
+
+  // ── OTHER HANDLERS ──────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!confirm("Padam produk ini?")) return;
     setDeleting(true);
@@ -284,17 +340,56 @@ export default function ProductDetailPage() {
     } catch { console.error("Delete error"); } finally { setDeleting(false); }
   };
 
+  const openAddProduction = () => {
+    const isFirst = productions.length === 0;
+    setProdForm({
+      name: "",
+      quantity: "",
+      unit: "unit",
+      cost_per_unit: "",
+      total_cost: "",
+      units_produced: isFirst ? "" : "",
+      batch_date: new Date().toISOString().split("T")[0],
+    });
+    setShowAddProduction(true);
+  };
+
   const handleAddProduction = async () => {
-    if (!prodForm.name || !prodForm.quantity || !prodForm.total_cost || !prodForm.units_produced) return;
+    if (!prodForm.name || !prodForm.quantity || !prodForm.total_cost) return;
+
+    const finalUnits = prodForm.units_produced ? parseInt(prodForm.units_produced) : unitsProduced;
+    if (!finalUnits || finalUnits <= 0) {
+      showToast("Sila masukkan bilangan unit dihasilkan (per batch) untuk bahan pertama.", "error");
+      return;
+    }
+
+    const qty = parseFloat(prodForm.quantity);
+    const minQty = getMinQuantity(prodForm.unit);
+    if (qty < minQty) {
+      const unitDisplay = prodForm.unit === 'kg' ? 'kg (min 0.002)' : 
+                          prodForm.unit === 'L' ? 'L (min 0.002)' :
+                          prodForm.unit === 'g' ? 'g (min 2)' :
+                          prodForm.unit === 'ml' ? 'ml (min 2)' : 'unit (min 1)';
+      showToast(`Kuantiti minimum untuk ${unitDisplay} ialah ${minQty} ${prodForm.unit}.`, "error");
+      return;
+    }
+
     setAddingProd(true);
     try {
+      const totalCost = parseFloat(prodForm.total_cost);
+      const baseQty = convertToBaseUnit(qty, prodForm.unit);
+      const costPerUnit = totalCost / baseQty;
+
       const res = await fetch(`${API_URL}/products/${product_id}/productions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          name: prodForm.name, quantity: parseFloat(prodForm.quantity), unit: prodForm.unit,
-          cost_per_unit: parseFloat(prodForm.cost_per_unit) || parseFloat(prodForm.total_cost) / parseFloat(prodForm.quantity),
-          total_cost: parseFloat(prodForm.total_cost), units_produced: parseInt(prodForm.units_produced),
+          name: prodForm.name,
+          quantity: qty,
+          unit: prodForm.unit,
+          cost_per_unit: costPerUnit,
+          total_cost: totalCost,
+          units_produced: finalUnits,
           batch_date: prodForm.batch_date,
         }),
       });
@@ -302,6 +397,7 @@ export default function ProductDetailPage() {
       if (data.production) setProductions(prev => [data.production, ...prev]);
       setProdForm({ name: "", quantity: "", unit: "unit", cost_per_unit: "", total_cost: "", units_produced: "", batch_date: new Date().toISOString().split("T")[0] });
       setShowAddProduction(false);
+      showToast("Bahan berjaya ditambah!", "success");
     } catch { console.error("Add production error"); } finally { setAddingProd(false); }
   };
 
@@ -312,33 +408,111 @@ export default function ProductDetailPage() {
       const res = await fetch(`${API_URL}/products/${product_id}/costs`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: costForm.name, type, behavior: costForm.behavior, cost_per_unit: parseFloat(costForm.cost_per_unit), total_cost: parseFloat(costForm.total_cost) }),
+        body: JSON.stringify({
+          name: costForm.name,
+          type,
+          behavior: costForm.behavior,
+          cost_per_unit: parseFloat(costForm.cost_per_unit),
+          total_cost: parseFloat(costForm.total_cost)
+        }),
       });
       const data = await res.json();
       if (data.cost) setCosts(prev => [data.cost, ...prev]);
       setCostForm({ name: "", behavior: "fixed", cost_per_unit: "", total_cost: "" });
       setShowAddCost(false);
+      showToast("Kos berjaya ditambah!", "success");
     } catch { console.error("Add cost error"); } finally { setAddingCost(false); }
   };
 
-  const handleUpdateQuantity = async (production_id: string, newQty: number) => {
-    if (newQty <= 0) return;
+  const handleUpdateQuantity = async (production_id: string, delta: number) => {
+    const prod = productions.find(p => p.production_id === production_id);
+    if (!prod) return;
+
+    const currentQty = typeof prod.quantity === 'string' ? parseFloat(prod.quantity) : prod.quantity;
+    if (isNaN(currentQty)) return;
+
+    const step = getStep(prod.unit);
+    const minQty = getMinQuantity(prod.unit);
+    let newQty = currentQty + delta;
+
+    if (step === 0.001) {
+      newQty = Math.round(newQty * 1000) / 1000;
+    } else {
+      newQty = Math.round(newQty);
+    }
+
+    if (newQty < minQty) {
+      showToast(`Kuantiti minimum ialah ${minQty} ${prod.unit}.`, "error");
+      return;
+    }
+
+    const formattedQty = step === 0.001 ? Number(newQty.toFixed(3)) : newQty;
+
+    const totalCost = prod.total_cost;
+    const baseQty = convertToBaseUnit(formattedQty, prod.unit);
+    const newCostPerUnit = totalCost / baseQty;
+
+    setProductions(prev =>
+      prev.map(p =>
+        p.production_id === production_id
+          ? { ...p, quantity: formattedQty, cost_per_unit: newCostPerUnit, total_cost: totalCost }
+          : p
+      )
+    );
+
     try {
-      const prod = productions.find(p => p.production_id === production_id);
-      if (!prod) return;
-      const newTotal = (newQty * parseFloat(String(prod.cost_per_unit))).toFixed(2);
-      setProductions(prev => prev.map(p => p.production_id === production_id ? { ...p, quantity: newQty, total_cost: parseFloat(newTotal) } : p));
-      await fetch(`${API_URL}/productions/${production_id}`, {
+      const response = await fetch(`${API_URL}/productions/${production_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: prod.name, quantity: newQty, unit: prod.unit, cost_per_unit: prod.cost_per_unit, total_cost: parseFloat(newTotal), units_produced: prod.units_produced, batch_date: prod.batch_date }),
+        body: JSON.stringify({
+          name: prod.name,
+          quantity: formattedQty,
+          unit: prod.unit,
+          cost_per_unit: newCostPerUnit,
+          total_cost: totalCost,
+          units_produced: prod.units_produced,
+          batch_date: prod.batch_date,
+        }),
       });
-    } catch { console.error("Update quantity error"); }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("API Error:", errorData);
+        setProductions(prev =>
+          prev.map(p =>
+            p.production_id === production_id
+              ? { ...p, quantity: currentQty, cost_per_unit: prod.cost_per_unit, total_cost: prod.total_cost }
+              : p
+          )
+        );
+        showToast(errorData.message || "Gagal mengemaskini kuantiti.", "error");
+      } else {
+        showToast("Kuantiti dikemaskini!", "success");
+      }
+    } catch (err) {
+      console.error("Update quantity error", err);
+      setProductions(prev =>
+        prev.map(p =>
+          p.production_id === production_id
+            ? { ...p, quantity: currentQty, cost_per_unit: prod.cost_per_unit, total_cost: prod.total_cost }
+            : p
+        )
+      );
+      showToast("Ralat rangkaian. Sila cuba lagi.", "error");
+    }
   };
 
   const openEditProduction = (p: Production) => {
     setSelectedProduction(p);
-    setEditProdForm({ name: p.name ?? "", quantity: String(p.quantity), unit: p.unit ?? "unit", cost_per_unit: String(p.cost_per_unit), total_cost: String(p.total_cost), units_produced: String(p.units_produced ?? 1), batch_date: p.batch_date ? p.batch_date.split("T")[0] : new Date().toISOString().split("T")[0] });
+    setEditProdForm({
+      name: p.name ?? "",
+      quantity: String(p.quantity),
+      unit: p.unit ?? "unit",
+      cost_per_unit: String(p.cost_per_unit),
+      total_cost: String(p.total_cost),
+      units_produced: String(p.units_produced ?? 1),
+      batch_date: p.batch_date ? p.batch_date.split("T")[0] : new Date().toISOString().split("T")[0],
+    });
   };
 
   const openEditCost = (c: Cost) => {
@@ -350,14 +524,38 @@ export default function ProductDetailPage() {
     if (!selectedProduction) return;
     setSavingEdit(true);
     try {
+      const qty = parseFloat(editProdForm.quantity);
+      const minQty = getMinQuantity(editProdForm.unit);
+      if (qty < minQty) {
+        const unitDisplay = editProdForm.unit === 'kg' ? 'kg (min 0.002)' : 
+                            editProdForm.unit === 'L' ? 'L (min 0.002)' :
+                            editProdForm.unit === 'g' ? 'g (min 2)' :
+                            editProdForm.unit === 'ml' ? 'ml (min 2)' : 'unit (min 1)';
+        showToast(`Kuantiti minimum untuk ${unitDisplay} ialah ${minQty} ${editProdForm.unit}.`, "error");
+        return;
+      }
+
+      const totalCost = parseFloat(editProdForm.total_cost);
+      const baseQty = convertToBaseUnit(qty, editProdForm.unit);
+      const costPerUnit = totalCost / baseQty;
+
       const res = await fetch(`${API_URL}/productions/${selectedProduction.production_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: editProdForm.name, quantity: parseFloat(editProdForm.quantity), unit: editProdForm.unit, cost_per_unit: parseFloat(editProdForm.cost_per_unit), total_cost: parseFloat(editProdForm.total_cost), units_produced: parseInt(editProdForm.units_produced), batch_date: editProdForm.batch_date }),
+        body: JSON.stringify({
+          name: editProdForm.name,
+          quantity: qty,
+          unit: editProdForm.unit,
+          cost_per_unit: costPerUnit,
+          total_cost: totalCost,
+          units_produced: parseInt(editProdForm.units_produced),
+          batch_date: editProdForm.batch_date,
+        }),
       });
       const data = await res.json();
       setProductions(prev => prev.map(p => p.production_id === selectedProduction.production_id ? data.production : p));
       setSelectedProduction(null);
+      showToast("Bahan berjaya dikemaskini!", "success");
     } catch { console.error("Edit production error"); } finally { setSavingEdit(false); }
   };
 
@@ -368,6 +566,7 @@ export default function ProductDetailPage() {
       await fetch(`${API_URL}/productions/${selectedProduction.production_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       setProductions(prev => prev.filter(p => p.production_id !== selectedProduction.production_id));
       setSelectedProduction(null);
+      showToast("Bahan berjaya dipadam!", "success");
     } catch { console.error("Delete production error"); } finally { setDeletingItem(false); }
   };
 
@@ -378,11 +577,17 @@ export default function ProductDetailPage() {
       const res = await fetch(`${API_URL}/costs/${selectedCost.costs_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: editCostForm.name, behavior: editCostForm.behavior, cost_per_unit: parseFloat(editCostForm.cost_per_unit), total_cost: parseFloat(editCostForm.total_cost) }),
+        body: JSON.stringify({
+          name: editCostForm.name,
+          behavior: editCostForm.behavior,
+          cost_per_unit: parseFloat(editCostForm.cost_per_unit),
+          total_cost: parseFloat(editCostForm.total_cost)
+        }),
       });
       const data = await res.json();
       setCosts(prev => prev.map(c => c.costs_id === selectedCost.costs_id ? data.cost : c));
       setSelectedCost(null);
+      showToast("Kos berjaya dikemaskini!", "success");
     } catch { console.error("Edit cost error"); } finally { setSavingEdit(false); }
   };
 
@@ -393,6 +598,7 @@ export default function ProductDetailPage() {
       await fetch(`${API_URL}/costs/${selectedCost.costs_id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       setCosts(prev => prev.filter(c => c.costs_id !== selectedCost.costs_id));
       setSelectedCost(null);
+      showToast("Kos berjaya dipadam!", "success");
     } catch { console.error("Delete cost error"); } finally { setDeletingItem(false); }
   };
 
@@ -400,7 +606,7 @@ export default function ProductDetailPage() {
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "bahan",  label: "Bahan",        icon: <IconBox  /> },
     { key: "tenaga", label: "Tenaga Kerja", icon: <IconUser /> },
-    { key: "lain",   label: "Lain-Lain",   icon: <IconZap  /> },
+    { key: "lain",   label: "Lain-Lain",    icon: <IconZap  /> },
   ];
   const tabTooltips: Record<Tab, string> = {
     bahan:  "Masukkan semua bahan mentah untuk 1 batch pengeluaran. Sertakan bilangan unit yang dihasilkan.",
@@ -438,11 +644,13 @@ export default function ProductDetailPage() {
         .pd-hero-img { width:60px; height:60px; border-radius:18px; overflow:hidden; flex-shrink:0; border:2px solid rgba(255,255,255,0.3); }
         .pd-hero-img img { width:100%; height:100%; object-fit:cover; }
         .pd-hero-name { font-size:20px; font-weight:800; color:#fff; letter-spacing:-0.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .pd-hero-sub { font-size:13px; color:rgba(255,255,255,0.65); font-weight:500; margin-top:3px; }
+        .pd-hero-price-wrap { display:flex; align-items:center; gap:8px; margin-top:4px; }
+        .pd-hero-price { font-size:13px; color:rgba(255,255,255,0.65); font-weight:500; }
+        .pd-edit-price-btn { background:rgba(255,255,255,0.15); border:1.5px solid rgba(255,255,255,0.2); border-radius:99px; color:#fff; padding:4px 10px; font-size:11px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:4px; transition:background 0.2s; font-family:'Plus Jakarta Sans',sans-serif; }
+        .pd-edit-price-btn:hover { background:rgba(255,255,255,0.25); }
+
         .pd-pills-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
-        /* Primary pill: Net Profit Margin */
         .pd-margin-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:700; background:rgba(255,255,255,0.18); border:1px solid rgba(255,255,255,0.28); }
-        /* Secondary pill: CM Ratio */
         .pd-cm-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:600; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14); }
 
         .pd-body { margin-top:-44px; padding:0 16px; position:relative; z-index:10; }
@@ -508,7 +716,6 @@ export default function ProductDetailPage() {
         .pd-empty-desc { font-size:12px; color:#94a3b8; text-align:center; line-height:1.5; }
         .pd-empty-cta { margin-top:4px; font-size:12px; font-weight:700; color:#2563eb; background:#eff6ff; border:none; padding:8px 18px; border-radius:99px; cursor:pointer; font-family:'Plus Jakarta Sans',sans-serif; }
 
-        /* ── CVP CARD ── */
         .pd-cvp { background:#fff; border-radius:20px; border:1px solid #f1f5f9; box-shadow:0 2px 8px rgba(0,0,0,0.04); padding:16px; margin-bottom:14px; animation:fadeUp 0.4s ease both; }
         .pd-cvp-header { margin-bottom:14px; }
         .pd-cvp-title { font-size:13px; font-weight:800; color:#1e293b; }
@@ -530,7 +737,6 @@ export default function ProductDetailPage() {
         .pd-kpi.purple { background:#f5f3ff; } .pd-kpi.purple .pd-kpi-label { color:#7c3aed; } .pd-kpi.purple .pd-kpi-val { color:#6d28d9; }
         .pd-kpi.slate  { background:#f8fafc; } .pd-kpi.slate .pd-kpi-label { color:#64748b; } .pd-kpi.slate .pd-kpi-val { color:#334155; }
 
-        /* BEP dark card */
         .pd-bep-card { background:linear-gradient(135deg,#0f172a,#1e293b); border-radius:18px; padding:14px; margin-bottom:10px; }
         .pd-bep-header { display:flex; align-items:center; gap:7px; margin-bottom:12px; }
         .pd-bep-header-icon { width:26px; height:26px; border-radius:8px; background:rgba(59,130,246,0.2); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; }
@@ -541,12 +747,10 @@ export default function ProductDetailPage() {
         .pd-bep-kpi-label { font-size:9px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:4px; }
         .pd-bep-kpi-val { font-size:15px; font-weight:800; color:#fff; }
         .pd-bep-kpi-sub { font-size:9px; color:#475569; margin-top:2px; font-weight:500; }
-        /* Highlighted BEP items (min price & min units) */
         .pd-bep-kpi.highlight { background:rgba(59,130,246,0.15); border:1px solid rgba(59,130,246,0.3); }
         .pd-bep-kpi.highlight .pd-bep-kpi-val { color:#93c5fd; }
         .pd-bep-kpi.highlight .pd-bep-kpi-label { color:#60a5fa; }
 
-        /* Safety margin */
         .pd-safety-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:11px 12px; margin-top:10px; }
         .pd-safety-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
         .pd-safety-label { display:flex; align-items:center; gap:5px; font-size:10px; font-weight:700; color:#94a3b8; }
@@ -574,21 +778,18 @@ export default function ProductDetailPage() {
         .pd-profit-banner.profit .pd-profit-banner-desc { color:#16a34a; }
         .pd-profit-banner.loss   .pd-profit-banner-desc { color:#ef4444; }
 
-        /* Ringkasan */
         .pd-ringkasan { background:#fff; border-radius:20px; border:1px solid #f1f5f9; padding:14px 16px; margin-bottom:14px; animation:fadeUp 0.45s ease both; }
         .pd-ringkasan-title { font-size:10px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px; }
         .pd-cost-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
         .pd-cost-row-label { font-size:12px; color:#64748b; font-weight:500; }
         .pd-cost-row-val { font-size:12px; color:#334155; font-weight:700; }
         .pd-cost-divider { height:1px; background:#f1f5f9; margin:8px 0; }
-        /* FIXED: bottom row now shows Harga Minimum Jual, NOT CM per Unit */
         .pd-cost-total-row { display:flex; align-items:center; justify-content:space-between; background:linear-gradient(135deg,#0f172a,#1e293b); border-radius:14px; padding:11px 14px; margin-top:10px; }
         .pd-cost-total-label { font-size:13px; font-weight:700; color:rgba(255,255,255,0.75); }
         .pd-cost-total-val { font-size:16px; font-weight:800; color:#fff; }
 
         .pd-batch-badge { display:inline-flex; align-items:center; gap:6px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:99px; padding:4px 10px; font-size:11px; font-weight:600; color:#1d4ed8; margin-bottom:14px; }
 
-        /* Modal */
         .pd-modal-backdrop { position:fixed; inset:0; z-index:60; background:rgba(15,23,42,0.45); display:flex; align-items:flex-end; backdrop-filter:blur(2px); animation:backdropIn 0.2s ease; }
         @keyframes backdropIn { from{opacity:0} to{opacity:1} }
         .pd-modal-sheet { width:100%; background:#fff; border-radius:28px 28px 0 0; max-height:88vh; overflow-y:auto; padding:6px 16px 32px; animation:sheetUp 0.3s cubic-bezier(0.32,0.72,0,1) both; }
@@ -615,12 +816,75 @@ export default function ProductDetailPage() {
         .pd-delete-danger-btn:disabled { opacity:0.55; pointer-events:none; }
         .pd-spinner { width:16px; height:16px; border-radius:50%; border:2px solid rgba(255,255,255,0.4); border-top-color:#fff; animation:spin 0.65s linear infinite; display:inline-block; }
 
+        /* ── TOAST ── */
+        .pd-toast-container {
+          position: fixed;
+          bottom: 90px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 9999;
+          width: 90%;
+          max-width: 400px;
+        }
+        .pd-toast {
+          padding: 14px 18px;
+          border-radius: 14px;
+          box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          backdrop-filter: blur(8px);
+          animation: slideUp 0.3s ease, fadeOut 0.3s ease 3.2s forwards;
+        }
+        .pd-toast-error {
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #dc2626;
+        }
+        .pd-toast-success {
+          background: #f0fdf4;
+          border: 1px solid #bbf7d0;
+          color: #15803d;
+        }
+        .pd-toast-info {
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          color: #1d4ed8;
+        }
+        .pd-toast-icon {
+          flex-shrink: 0;
+          width: 20px;
+          height: 20px;
+        }
+        .pd-toast-message {
+          flex: 1;
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.4;
+        }
+        .pd-toast-close {
+          background: none;
+          border: none;
+          color: currentColor;
+          opacity: 0.6;
+          cursor: pointer;
+          padding: 4px;
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeOut {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
+
         @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spin   { to{transform:rotate(360deg)} }
       `}</style>
 
       <div className="pd-root">
-        {/* ── HEADER ── */}
+        {/* HEADER */}
         <div className="pd-header">
           <div className="pd-header-top">
             <button className="pd-back-btn" onClick={() => router.back()}><IconBack /> Kira Kos</button>
@@ -632,16 +896,19 @@ export default function ProductDetailPage() {
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="pd-hero-name">{product?.name}</div>
-              <div className="pd-hero-sub">Harga jual: RM {sellingPrice.toFixed(2)} / unit</div>
+              <div className="pd-hero-price-wrap">
+                <span className="pd-hero-price">Harga jual: RM {sellingPrice.toFixed(2)} / unit</span>
+                <button className="pd-edit-price-btn" onClick={openEditPriceModal}>
+                  <IconEdit /> Edit
+                </button>
+              </div>
               <div className="pd-pills-row">
-                {/* PRIMARY pill: Net Profit Margin (37%) — what owners understand */}
                 <div className="pd-margin-pill">
                   <div style={{ width: 7, height: 7, borderRadius: "50%", background: marginMeta.dot }} />
                   <span style={{ color: "#fff", fontSize: 11, fontWeight: 700 }}>
                     Untung {cvp.netProfitMarginPct.toFixed(1)}% — {marginMeta.label}
                   </span>
                 </div>
-                {/* SECONDARY pill: CM Ratio (69%) — CVP term */}
                 {cvp.totalBatchCost > 0 && (
                   <div className="pd-cm-pill">
                     <span style={{ color: "rgba(255,255,255,0.65)", fontSize: 11, fontWeight: 600 }}>
@@ -714,16 +981,16 @@ export default function ProductDetailPage() {
                   <IconSearch />
                   <input type="text" placeholder="Cari bahan..." value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
-                <button className="pd-add-fab" onClick={() => setShowAddProduction(true)}>
+                <button className="pd-add-fab" onClick={openAddProduction}>
                   <IconPlus size={18} color="#fff" />
                 </button>
               </div>
               {filteredProductions.length === 0 ? (
-                <div className="pd-empty" onClick={() => setShowAddProduction(true)}>
+                <div className="pd-empty" onClick={openAddProduction}>
                   <div className="pd-empty-icon"><IconBox /></div>
                   <div className="pd-empty-title">{search ? "Tiada hasil" : "Tiada bahan lagi"}</div>
                   <div className="pd-empty-desc">{search ? `Tiada bahan sepadan dengan "${search}"` : "Tambah bahan dan bilangan unit yang dihasilkan per batch."}</div>
-                  {!search && <button className="pd-empty-cta" onClick={e => { e.stopPropagation(); setShowAddProduction(true); }}>+ Tambah Bahan</button>}
+                  {!search && <button className="pd-empty-cta" onClick={e => { e.stopPropagation(); openAddProduction(); }}>+ Tambah Bahan</button>}
                 </div>
               ) : (
                 filteredProductions.map((p, idx) => (
@@ -732,11 +999,14 @@ export default function ProductDetailPage() {
                       <div className="pd-item-icon bahan"><IconBox /></div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="pd-item-name">{p.name ?? "—"}</div>
-                        <div className="pd-item-sub">RM {parseFloat(String(p.cost_per_unit)).toFixed(4)} / {p.unit ?? "unit"}{p.units_produced ? ` · ${p.units_produced} unit dihasilkan` : ""}</div>
+                        <div className="pd-item-sub">
+                          RM {parseFloat(String(p.cost_per_unit)).toFixed(4)} / {getBaseUnitDisplay(p.unit)}
+                          {p.units_produced ? ` · ${p.units_produced} unit dihasilkan` : ""}
+                        </div>
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div className="pd-item-amount">RM {parseFloat(String(p.total_cost)).toFixed(2)}</div>
-                        <div className="pd-item-amount-sub">{p.quantity} {p.unit}</div>
+                        <div className="pd-item-amount-sub">{formatQuantityDisplay(p.quantity, p.unit)} {p.unit}</div>
                       </div>
                       <div className="pd-item-arrow"><IconArrowRight /></div>
                     </div>
@@ -744,9 +1014,15 @@ export default function ProductDetailPage() {
                     <div className="pd-qty-row" onClick={e => e.stopPropagation()}>
                       <span className="pd-qty-label">Kuantiti</span>
                       <div className="pd-qty-controls">
-                        <button className="pd-qty-btn minus" onClick={() => handleUpdateQuantity(p.production_id, p.quantity - 1)}>−</button>
-                        <span className="pd-qty-val">{p.quantity} {p.unit}</span>
-                        <button className="pd-qty-btn plus" onClick={() => handleUpdateQuantity(p.production_id, p.quantity + 1)}>+</button>
+                        <button 
+                          className="pd-qty-btn minus" 
+                          onClick={() => handleUpdateQuantity(p.production_id, -getStep(p.unit))}
+                        >−</button>
+                        <span className="pd-qty-val">{formatQuantityDisplay(p.quantity, p.unit)} {p.unit}</span>
+                        <button 
+                          className="pd-qty-btn plus" 
+                          onClick={() => handleUpdateQuantity(p.production_id, getStep(p.unit))}
+                        >+</button>
                       </div>
                     </div>
                   </div>
@@ -760,7 +1036,7 @@ export default function ProductDetailPage() {
             <>
               <button className="pd-add-full-btn" onClick={() => setShowAddCost(true)}>
                 <IconPlus size={16} color="#fff" />
-                {tab === "tenaga" ? "Tambah Tenaga Kerja" : "Tambah Overhead / Lain-lain  "}
+                {tab === "tenaga" ? "Tambah Tenaga Kerja" : "Tambah Overhead / Lain-lain"}
               </button>
               {costs.filter(c => c?.type === tabCostType[tab]).length === 0 ? (
                 <div className="pd-empty">
@@ -781,7 +1057,7 @@ export default function ProductDetailPage() {
                       </div>
                       <div style={{ textAlign:"right" }}>
                         <div className="pd-item-amount">RM {parseFloat(String(c.total_cost)).toFixed(2)}</div>
-                        <div className="pd-item-amount-sub">RM {parseFloat(String(c.cost_per_unit)).toFixed(2)}/unit</div>
+                        <div className="pd-item-amount-sub">RM {parseFloat(String(c.cost_per_unit)).toFixed(4)}/unit</div>
                       </div>
                       <div className="pd-item-arrow"><IconArrowRight /></div>
                     </div>
@@ -806,32 +1082,27 @@ export default function ProductDetailPage() {
               </div>
             ) : (
               <>
-                {/* SECTION 1: Margin & Sumbangan */}
                 <div className="pd-section-divider">
                   <div className="pd-section-divider-line" />
                   <div className="pd-section-divider-label">Margin &amp; Sumbangan</div>
                   <div className="pd-section-divider-line" />
                 </div>
                 <div className="pd-kpi-grid">
-                  {/* Net Profit Margin — PRIMARY, SME friendly */}
                   <div className={`pd-kpi ${cvp.netProfitMarginPct >= 30 ? "green" : cvp.netProfitMarginPct >= 10 ? "amber" : "red"}`}>
                     <div className="pd-kpi-label">Margin Untung Bersih</div>
                     <div className="pd-kpi-val">{cvp.netProfitMarginPct.toFixed(1)}%</div>
                     <div className="pd-kpi-sub">(SP − kos/unit) ÷ SP</div>
                   </div>
-                  {/* CM Ratio — CVP academic */}
                   <div className={`pd-kpi ${cvp.cmRatio >= 30 ? "green" : cvp.cmRatio >= 15 ? "amber" : "red"}`}>
                     <div className="pd-kpi-label">CM Ratio</div>
                     <div className="pd-kpi-val">{cvp.cmRatio.toFixed(1)}%</div>
                     <div className="pd-kpi-sub">CM/unit ÷ harga jual</div>
                   </div>
-                  {/* Variable Cost per Unit */}
                   <div className="pd-kpi blue">
                     <div className="pd-kpi-label">Kos Berubah/Unit</div>
                     <div className="pd-kpi-val">RM {cvp.variableCostPerUnit.toFixed(2)}</div>
                     <div className="pd-kpi-sub">bahan + kos berubah</div>
                   </div>
-                  {/* CM per Unit */}
                   <div className={`pd-kpi ${cvp.cmPerUnit >= 0 ? "green" : "red"}`}>
                     <div className="pd-kpi-label">CM / Unit</div>
                     <div className="pd-kpi-val">RM {cvp.cmPerUnit.toFixed(2)}</div>
@@ -839,7 +1110,6 @@ export default function ProductDetailPage() {
                   </div>
                 </div>
 
-                {/* SECTION 2: BEP */}
                 <div className="pd-section-divider">
                   <div className="pd-section-divider-line" />
                   <div className="pd-section-divider-label">Titik Pulang Modal (BEP)</div>
@@ -854,13 +1124,11 @@ export default function ProductDetailPage() {
                     </div>
                   </div>
                   <div className="pd-bep-grid">
-                    {/* Harga Minimum Jual — most important for owners */}
                     <div className="pd-bep-kpi highlight">
                       <div className="pd-bep-kpi-label">Harga Minimum Jual</div>
                       <div className="pd-bep-kpi-val">RM {cvp.minSellingPrice.toFixed(2)}</div>
                       <div className="pd-bep-kpi-sub">kos batch ÷ {unitsProduced} unit</div>
                     </div>
-                    {/* Unit Minimum Jual */}
                     <div className="pd-bep-kpi highlight">
                       <div className="pd-bep-kpi-label">Unit Minimum Jual</div>
                       <div className="pd-bep-kpi-val">
@@ -868,7 +1136,6 @@ export default function ProductDetailPage() {
                       </div>
                       <div className="pd-bep-kpi-sub">dari {unitsProduced} unit batch</div>
                     </div>
-                    {/* BEP Revenue — FIXED: uses Math.ceil(bepUnits) */}
                     <div className="pd-bep-kpi">
                       <div className="pd-bep-kpi-label">Hasil Jualan BEP</div>
                       <div className="pd-bep-kpi-val" style={{ fontSize:13 }}>{bepRevDisplay}</div>
@@ -876,7 +1143,6 @@ export default function ProductDetailPage() {
                         {bepUnitsCeil !== Infinity ? `${bepUnitsCeil} unit × RM ${sellingPrice.toFixed(2)}` : "—"}
                       </div>
                     </div>
-                    {/* Kos Seunit Total */}
                     <div className="pd-bep-kpi">
                       <div className="pd-bep-kpi-label">Kos Seunit (Total)</div>
                       <div className="pd-bep-kpi-val" style={{ fontSize:13 }}>RM {cvp.costPerUnitTotal.toFixed(2)}</div>
@@ -884,7 +1150,6 @@ export default function ProductDetailPage() {
                     </div>
                   </div>
 
-                  {/* Safety Margin bar */}
                   {bepUnitsCeil !== Infinity && (
                     <div className="pd-safety-card">
                       <div className="pd-safety-header">
@@ -914,16 +1179,14 @@ export default function ProductDetailPage() {
                   )}
                 </div>
 
-                {/* Cost info strip */}
-                  <div className="pd-cost-info-row">
-                    <strong>Kos Tetap/Batch:</strong> RM {cvp.totalFixedCost.toFixed(2)}
-                    &nbsp;&nbsp;·&nbsp;&nbsp;
-                    <strong>Kos Berubah Total:</strong> RM {cvp.totalVariableCost.toFixed(2)}
-                    &nbsp;&nbsp;·&nbsp;&nbsp;
-                    <strong>Jumlah Kos Batch:</strong> RM {cvp.totalBatchCost.toFixed(2)}
-                  </div>
+                <div className="pd-cost-info-row">
+                  <strong>Kos Tetap/Batch:</strong> RM {cvp.totalFixedCost.toFixed(2)}
+                  &nbsp;&nbsp;·&nbsp;&nbsp;
+                  <strong>Kos Berubah Total:</strong> RM {cvp.totalVariableCost.toFixed(2)}
+                  &nbsp;&nbsp;·&nbsp;&nbsp;
+                  <strong>Jumlah Kos Batch:</strong> RM {cvp.totalBatchCost.toFixed(2)}
+                </div>
 
-                {/* Profit / Loss banner */}
                 {sellingPrice > 0 && (
                   <div className={`pd-profit-banner ${cvp.netProfitBatch >= 0 ? "profit" : "loss"}`}>
                     <div className="pd-profit-banner-icon">
@@ -943,6 +1206,7 @@ export default function ProductDetailPage() {
                     </div>
                   </div>
                 )}
+
                 {sharedFixedCost > 0 && (
                   <div className="pd-card" style={{ 
                     background: "#f0fdf4", 
@@ -1012,13 +1276,45 @@ export default function ProductDetailPage() {
               <span className="pd-cost-row-val" style={{ color:"#334155" }}>RM {cvp.costPerUnitTotal.toFixed(2)}</span>
             </div>
             <div className="pd-cost-divider" />
-            {/* FIXED: bottom gradient row = Harga Minimum Jual, NOT CM per Unit */}
             <div className="pd-cost-total-row">
               <span className="pd-cost-total-label">💰 Harga Minimum Jual</span>
               <span className="pd-cost-total-val">RM {cvp.minSellingPrice.toFixed(2)} / unit</span>
             </div>
           </div>
         </div>
+
+        {/* ── EDIT PRICE MODAL ── */}
+        {showEditPriceModal && (
+          <div className="pd-modal-backdrop" onClick={() => setShowEditPriceModal(false)}>
+            <div className="pd-modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="pd-modal-handle" />
+              <div className="pd-modal-title-row">
+                <span className="pd-modal-title">Edit Harga Jual</span>
+                <button className="pd-modal-close" onClick={() => setShowEditPriceModal(false)}>
+                  <IconClose />
+                </button>
+              </div>
+              <div className="pd-field">
+                <label className="pd-field-label">Harga Jual (RM / unit)</label>
+                <input
+                  type="number"
+                  placeholder="0.00"
+                  value={tempPrice}
+                  onChange={(e) => setTempPrice(parseFloat(e.target.value) || 0)}
+                  step="0.01"
+                  min="0"
+                />
+              </div>
+              <button
+                className="pd-save-btn"
+                onClick={handleUpdatePrice}
+                disabled={updatingPrice}
+              >
+                {updatingPrice ? <span className="pd-spinner" /> : "Simpan Harga"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ADD PRODUCTION MODAL */}
         {showAddProduction && (
@@ -1029,10 +1325,30 @@ export default function ProductDetailPage() {
                 <span className="pd-modal-title">Tambah Bahan</span>
                 <button className="pd-modal-close" onClick={() => setShowAddProduction(false)}><IconClose /></button>
               </div>
-              <div className="pd-field" style={{ border:"1.5px solid #bfdbfe", background:"#eff6ff" }}>
-                <label className="pd-field-label" style={{ color:"#3b82f6" }}>⭐ Bilangan Unit Dihasilkan (per batch)</label>
-                <input type="number" placeholder="cth: 50 (ayam gunting per batch)" value={prodForm.units_produced} onChange={e => setProdForm({ ...prodForm, units_produced: e.target.value })} />
-              </div>
+
+              {productions.length === 0 ? (
+                <div className="pd-field" style={{ border:"1.5px solid #bfdbfe", background:"#eff6ff" }}>
+                  <label className="pd-field-label" style={{ color:"#3b82f6" }}>⭐ Bilangan Unit Dihasilkan (per batch)</label>
+                  <input
+                    type="number"
+                    placeholder="cth: 50 (ayam gunting per batch)"
+                    value={prodForm.units_produced}
+                    onChange={e => setProdForm({ ...prodForm, units_produced: e.target.value })}
+                  />
+                  <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+                    * Hanya perlu diisi untuk bahan pertama. Batch seterusnya akan menggunakan nilai ini secara automatik.
+                  </div>
+                </div>
+              ) : (
+                <div className="pd-field" style={{ border:"1.5px solid #e2e8f0", background:"#f8fafc" }}>
+                  <label className="pd-field-label" style={{ color:"#94a3b8" }}>
+                    ⭐ Bilangan Unit Dihasilkan (per batch)
+                    <span style={{ color: "#2563eb", marginLeft: 6 }}>— Auto dari batch pertama: {unitsProduced} unit</span>
+                  </label>
+                  <input type="text" value={`${unitsProduced} unit`} disabled style={{ background:"transparent", color:"#475569", fontWeight:600 }} />
+                </div>
+              )}
+
               <div className="pd-field">
                 <label className="pd-field-label">Nama Bahan</label>
                 <input type="text" placeholder="cth: Tepung Gandum" value={prodForm.name} onChange={e => setProdForm({ ...prodForm, name: e.target.value })} />
@@ -1044,16 +1360,32 @@ export default function ProductDetailPage() {
               <div className="pd-field">
                 <label className="pd-field-label">Kuantiti &amp; Unit Bahan</label>
                 <div className="pd-qty-input-row">
-                  <input type="number" placeholder="cth: 4" value={prodForm.quantity}
+                  <input type="number" placeholder="cth: 0.125" value={prodForm.quantity}
                     style={{ width:80, background:"transparent", border:"none", outline:"none", fontSize:14, fontWeight:600, color:"#1e293b", fontFamily:"inherit" }}
                     onChange={e => {
-                      const qty = e.target.value;
-                      const cpu = (parseFloat(prodForm.total_cost || "0") / parseFloat(qty)).toFixed(4);
-                      setProdForm({ ...prodForm, quantity: qty, cost_per_unit: isNaN(parseFloat(cpu)) || !isFinite(parseFloat(cpu)) ? "" : cpu });
+                      const qty = parseFloat(e.target.value) || 0;
+                      const total = parseFloat(prodForm.total_cost || "0");
+                      const baseQty = convertToBaseUnit(qty, prodForm.unit);
+                      const cpu = baseQty > 0 ? total / baseQty : 0;
+                      setProdForm({
+                        ...prodForm,
+                        quantity: e.target.value,
+                        cost_per_unit: isNaN(cpu) || !isFinite(cpu) ? "" : cpu.toFixed(4),
+                      });
                     }} />
                   <div className="pd-pill-group">
                     {["unit","kg","g","ml","l"].map(u => (
-                      <button key={u} className={`pd-pill ${prodForm.unit === u ? "active" : ""}`} onClick={() => setProdForm({ ...prodForm, unit: u })}>{u}</button>
+                      <button key={u} className={`pd-pill ${prodForm.unit === u ? "active" : ""}`} onClick={() => {
+                        const qty = parseFloat(prodForm.quantity) || 0;
+                        const total = parseFloat(prodForm.total_cost || "0");
+                        const baseQty = convertToBaseUnit(qty, u);
+                        const cpu = baseQty > 0 ? total / baseQty : 0;
+                        setProdForm({
+                          ...prodForm,
+                          unit: u,
+                          cost_per_unit: isNaN(cpu) || !isFinite(cpu) ? "" : cpu.toFixed(4),
+                        });
+                      }}>{u}</button>
                     ))}
                   </div>
                 </div>
@@ -1063,20 +1395,26 @@ export default function ProductDetailPage() {
                   <label className="pd-field-label">Jumlah Kos Bahan (RM)</label>
                   <input type="number" placeholder="0.00" value={prodForm.total_cost}
                     onChange={e => {
-                      const total = e.target.value;
-                      const cpu = (parseFloat(total) / parseFloat(prodForm.quantity || "1")).toFixed(4);
-                      setProdForm({ ...prodForm, total_cost: total, cost_per_unit: isNaN(parseFloat(cpu)) || !isFinite(parseFloat(cpu)) ? "" : cpu });
+                      const total = parseFloat(e.target.value) || 0;
+                      const qty = parseFloat(prodForm.quantity) || 0;
+                      const baseQty = convertToBaseUnit(qty, prodForm.unit);
+                      const cpu = baseQty > 0 ? total / baseQty : 0;
+                      setProdForm({
+                        ...prodForm,
+                        total_cost: e.target.value,
+                        cost_per_unit: isNaN(cpu) || !isFinite(cpu) ? "" : cpu.toFixed(4),
+                      });
                     }} />
                 </div>
                 <div className="pd-field pd-field-readonly">
                   <label className="pd-field-label">Kos/Unit Bahan (Auto)</label>
-                  <input type="text" placeholder="0.00" value={prodForm.cost_per_unit ? parseFloat(prodForm.cost_per_unit).toFixed(4) : ""} readOnly />
+                  <input type="text" placeholder="0.0000" value={prodForm.cost_per_unit ? parseFloat(prodForm.cost_per_unit).toFixed(4) : ""} readOnly />
                 </div>
               </div>
               <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:12, padding:"10px 12px", marginBottom:12, fontSize:11, color:"#92400e", lineHeight:1.6 }}>
-                💡 <strong>Contoh:</strong> Beli 4 telur (RM2.40) untuk hasilkan 50 ayam gunting. Bilangan unit = 50, kuantiti = 4, jumlah kos = RM2.40.
+                💡 <strong>Contoh:</strong> 0.125 kg tepung = 125g, kos RM1.00 → Kos/unit = 1.00 ÷ 125 = RM0.0080/g
               </div>
-              <button className="pd-save-btn" onClick={handleAddProduction} disabled={addingProd || !prodForm.name || !prodForm.quantity || !prodForm.total_cost || !prodForm.units_produced}>
+              <button className="pd-save-btn" onClick={handleAddProduction} disabled={addingProd || !prodForm.name || !prodForm.quantity || !prodForm.total_cost || (productions.length === 0 && !prodForm.units_produced)}>
                 {addingProd ? <span className="pd-spinner" /> : "Simpan Bahan"}
               </button>
             </div>
@@ -1155,13 +1493,29 @@ export default function ProductDetailPage() {
                   <input type="number" value={editProdForm.quantity}
                     style={{ width:80, background:"transparent", border:"none", outline:"none", fontSize:14, fontWeight:600, color:"#1e293b", fontFamily:"inherit" }}
                     onChange={e => {
-                      const qty = e.target.value;
-                      const cpu = (parseFloat(editProdForm.total_cost || "0") / parseFloat(qty)).toFixed(4);
-                      setEditProdForm({ ...editProdForm, quantity: qty, cost_per_unit: isNaN(parseFloat(cpu)) || !isFinite(parseFloat(cpu)) ? "" : cpu });
+                      const qty = parseFloat(e.target.value) || 0;
+                      const total = parseFloat(editProdForm.total_cost || "0");
+                      const baseQty = convertToBaseUnit(qty, editProdForm.unit);
+                      const cpu = baseQty > 0 ? total / baseQty : 0;
+                      setEditProdForm({
+                        ...editProdForm,
+                        quantity: e.target.value,
+                        cost_per_unit: isNaN(cpu) || !isFinite(cpu) ? "" : cpu.toFixed(4),
+                      });
                     }} />
                   <div className="pd-pill-group">
                     {["unit","kg","g","ml","l"].map(u => (
-                      <button key={u} className={`pd-pill ${editProdForm.unit === u ? "active" : ""}`} onClick={() => setEditProdForm({ ...editProdForm, unit: u })}>{u}</button>
+                      <button key={u} className={`pd-pill ${editProdForm.unit === u ? "active" : ""}`} onClick={() => {
+                        const qty = parseFloat(editProdForm.quantity) || 0;
+                        const total = parseFloat(editProdForm.total_cost || "0");
+                        const baseQty = convertToBaseUnit(qty, u);
+                        const cpu = baseQty > 0 ? total / baseQty : 0;
+                        setEditProdForm({
+                          ...editProdForm,
+                          unit: u,
+                          cost_per_unit: isNaN(cpu) || !isFinite(cpu) ? "" : cpu.toFixed(4),
+                        });
+                      }}>{u}</button>
                     ))}
                   </div>
                 </div>
@@ -1171,14 +1525,20 @@ export default function ProductDetailPage() {
                   <label className="pd-field-label">Jumlah Kos (RM)</label>
                   <input type="number" value={editProdForm.total_cost}
                     onChange={e => {
-                      const total = e.target.value;
-                      const cpu = (parseFloat(total) / parseFloat(editProdForm.quantity || "1")).toFixed(4);
-                      setEditProdForm({ ...editProdForm, total_cost: total, cost_per_unit: isNaN(parseFloat(cpu)) || !isFinite(parseFloat(cpu)) ? "" : cpu });
+                      const total = parseFloat(e.target.value) || 0;
+                      const qty = parseFloat(editProdForm.quantity) || 0;
+                      const baseQty = convertToBaseUnit(qty, editProdForm.unit);
+                      const cpu = baseQty > 0 ? total / baseQty : 0;
+                      setEditProdForm({
+                        ...editProdForm,
+                        total_cost: e.target.value,
+                        cost_per_unit: isNaN(cpu) || !isFinite(cpu) ? "" : cpu.toFixed(4),
+                      });
                     }} />
                 </div>
                 <div className="pd-field pd-field-readonly">
                   <label className="pd-field-label">Kos/Unit (Auto)</label>
-                  <input type="text" value={editProdForm.cost_per_unit ? parseFloat(editProdForm.cost_per_unit).toFixed(4) : ""} readOnly />
+                  <input type="text" placeholder="0.0000" value={editProdForm.cost_per_unit ? parseFloat(editProdForm.cost_per_unit).toFixed(4) : ""} readOnly />
                 </div>
               </div>
               <button className="pd-save-btn" onClick={handleEditProduction} disabled={savingEdit}>
@@ -1234,6 +1594,41 @@ export default function ProductDetailPage() {
           </div>
         )}
       </div>
+
+      {/* ── TOAST NOTIFICATION ── */}
+      {toast.visible && (
+        <div className="pd-toast-container">
+          <div className={`pd-toast pd-toast-${toast.type}`}>
+            <span className="pd-toast-icon">
+              {toast.type === "error" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              )}
+              {toast.type === "success" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
+              {toast.type === "info" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+              )}
+            </span>
+            <span className="pd-toast-message">{toast.message}</span>
+            <button className="pd-toast-close" onClick={() => setToast((prev) => ({ ...prev, visible: false }))}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }

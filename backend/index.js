@@ -73,18 +73,9 @@ const generateId = async (table, idColumn, prefix) => {
 
 // ----------------------
 // HELPER: recalculate and persist margin_percentage for a product
-//
-// CVP Formula (Single Product):
-//   Variable costs  = ALL productions (bahan) total_cost
-//                   + costs where behavior = 'variable'
-//   Fixed costs     = costs where behavior = 'fixed'
-//   Variable cost / unit = total_variable / units_produced  (from latest batch)
-//   CM / unit       = selling_price - variable_cost_per_unit
-//   Margin %        = (CM / unit / selling_price) * 100
 // ----------------------
 const recalcMargin = async (product_id) => {
   try {
-    // 1. Get selling price
     const prodRes = await pool.query(
       "SELECT selling_price FROM products WHERE product_id = $1",
       [product_id],
@@ -93,8 +84,6 @@ const recalcMargin = async (product_id) => {
     const sellingPrice = parseFloat(prodRes.rows[0].selling_price);
     if (sellingPrice <= 0) return;
 
-    // 2. Get units_produced from the latest production batch
-    //    Use MAX across all rows (all rows in same batch share the same value)
     const unitsRes = await pool.query(
       `SELECT COALESCE(MAX(units_produced), 0) AS units_produced
        FROM productions
@@ -103,7 +92,6 @@ const recalcMargin = async (product_id) => {
     );
     const unitsProduced = parseInt(unitsRes.rows[0].units_produced) || 0;
     if (unitsProduced <= 0) {
-      // No batch data yet — reset margin to 0
       await pool.query(
         "UPDATE products SET margin_percentage = 0 WHERE product_id = $1",
         [product_id],
@@ -111,14 +99,12 @@ const recalcMargin = async (product_id) => {
       return;
     }
 
-    // 3. Sum all bahan (productions) total_cost — always variable
     const bahanRes = await pool.query(
       "SELECT COALESCE(SUM(total_cost), 0) AS total FROM productions WHERE product_id = $1",
       [product_id],
     );
     const bahanTotal = parseFloat(bahanRes.rows[0].total);
 
-    // 4. Sum variable costs from costs table
     const varCostRes = await pool.query(
       `SELECT COALESCE(SUM(total_cost), 0) AS total
        FROM costs
@@ -127,23 +113,11 @@ const recalcMargin = async (product_id) => {
     );
     const varCostTotal = parseFloat(varCostRes.rows[0].total);
 
-    // 5. Sum fixed costs from costs table
-    const fixedCostRes = await pool.query(
-      `SELECT COALESCE(SUM(total_cost), 0) AS total
-       FROM costs
-       WHERE product_id = $1 AND behavior = 'fixed'`,
-      [product_id],
-    );
-    // fixedCostTotal not needed for margin % but kept for completeness
-    // const fixedCostTotal = parseFloat(fixedCostRes.rows[0].total);
-
-    // 6. CVP calculation
     const totalVariableCost = bahanTotal + varCostTotal;
     const variableCostPerUnit = totalVariableCost / unitsProduced;
     const cmPerUnit = sellingPrice - variableCostPerUnit;
     const marginPct = (cmPerUnit / sellingPrice) * 100;
 
-    // 7. Persist — round to 2 decimal places
     await pool.query(
       "UPDATE products SET margin_percentage = $1 WHERE product_id = $2",
       [parseFloat(marginPct.toFixed(2)), product_id],
@@ -159,41 +133,85 @@ const recalcMargin = async (product_id) => {
 };
 
 // ----------------------
-// GOOGLE AUTH
+// GOOGLE AUTH (with invite support)
 // ----------------------
 app.post("/auth/google", async (req, res) => {
+  const client = await pool.connect();
   try {
-    const { token } = req.body;
+    const { token, inviteToken, businessId } = req.body;
     if (!token) return res.status(400).json({ message: "No token provided." });
 
     const decoded = await admin.auth().verifyIdToken(token);
     const { email, name, uid } = decoded;
 
-    let result = await pool.query(
-      "SELECT * FROM users WHERE email = $1 OR google_uid = $2",
+    let role = "user";
+    let business_id = null;
+
+    // ── VALIDATE INVITE IF PROVIDED ──
+    if (inviteToken && businessId) {
+      const inviteCheck = await client.query(
+        `SELECT * FROM invites 
+         WHERE token = $1 AND business_id = $2 AND used = false 
+         AND expires_at > NOW()`,
+        [inviteToken, businessId],
+      );
+
+      if (inviteCheck.rows.length === 0) {
+        return res.status(400).json({
+          message: "Pautan jemputan tidak sah atau sudah tamat tempoh.",
+        });
+      }
+
+      await client.query("UPDATE invites SET used = true WHERE token = $1", [
+        inviteToken,
+      ]);
+
+      role = "staff";
+      business_id = businessId;
+    }
+
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      "SELECT * FROM users WHERE LOWER(email) = LOWER($1) OR google_uid = $2",
       [email, uid],
     );
 
     let user;
 
     if (result.rows.length === 0) {
-      const newUser = await pool.query(
-        `INSERT INTO users (name, email, password, role, provider, google_uid)
-         VALUES ($1, $2, NULL, $3, $4, $5)
-         RETURNING user_id, name, email, role, created_at`,
-        [name, email, "user", "google", uid],
+      const newUser = await client.query(
+        `INSERT INTO users (name, email, password, role, provider, google_uid, business_id)
+         VALUES ($1, $2, NULL, $3, $4, $5, $6)
+         RETURNING user_id, name, email, role, created_at, provider, business_id`,
+        [name, email, role, "google", uid, business_id],
       );
       user = newUser.rows[0];
     } else {
       user = result.rows[0];
+
+      // If user exists but no google_uid, link it
       if (!user.google_uid) {
-        await pool.query(
-          "UPDATE users SET google_uid = $1, provider = $2 WHERE user_id = $3",
-          [uid, "both", user.user_id],
+        await client.query(
+          `UPDATE users 
+           SET google_uid = $1, 
+               provider = CASE 
+                 WHEN provider = 'local' THEN 'both' 
+                 ELSE provider 
+               END,
+               name = COALESCE($2, name),
+               business_id = COALESCE($3, business_id)
+           WHERE user_id = $4`,
+          [uid, name, business_id || user.business_id, user.user_id],
         );
-        user.provider = "both";
+        user.google_uid = uid;
+        user.provider = user.provider === "local" ? "both" : user.provider;
+        user.name = name || user.name;
+        user.business_id = business_id || user.business_id;
       }
     }
+
+    await client.query("COMMIT");
 
     const jwtToken = jwt.sign(
       { user_id: user.user_id },
@@ -209,20 +227,151 @@ app.post("/auth/google", async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        provider: user.provider,
+        business_id: user.business_id,
       },
     });
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error("GOOGLE AUTH ERROR:", err);
     res.status(401).json({ message: "Token Google tidak sah." });
+  } finally {
+    client.release();
   }
 });
 
 // ----------------------
-// REGISTER
+// LINK GOOGLE ACCOUNT TO EXISTING USER (with MERGE)
+// ----------------------
+app.post("/auth/link-google", authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: "No token provided." });
+
+    const decoded = await admin.auth().verifyIdToken(token);
+    const { email, name, uid } = decoded;
+
+    const currentUserId = req.user.user_id;
+
+    const uidCheck = await client.query(
+      "SELECT user_id, email FROM users WHERE google_uid = $1 AND user_id != $2",
+      [uid, currentUserId],
+    );
+
+    let googleUserId = null;
+    let googleBusinessId = null;
+
+    if (uidCheck.rows.length > 0) {
+      const otherUser = uidCheck.rows[0];
+      if (otherUser.email.toLowerCase() === email.toLowerCase()) {
+        googleUserId = otherUser.user_id;
+        const bizRes = await client.query(
+          "SELECT business_id FROM business WHERE user_id = $1",
+          [googleUserId],
+        );
+        if (bizRes.rows.length > 0) {
+          googleBusinessId = bizRes.rows[0].business_id;
+        }
+      } else {
+        return res.status(400).json({
+          message: "Akaun Google ini sudah dipautkan dengan akaun lain.",
+        });
+      }
+    }
+
+    if (!googleUserId) {
+      const googleUser = await client.query(
+        `SELECT u.user_id, b.business_id 
+         FROM users u 
+         LEFT JOIN business b ON u.user_id = b.user_id 
+         WHERE u.email = $1 
+           AND u.provider = 'google' 
+           AND u.user_id != $2`,
+        [email, currentUserId],
+      );
+      if (googleUser.rows.length > 0) {
+        googleUserId = googleUser.rows[0].user_id;
+        googleBusinessId = googleUser.rows[0].business_id;
+      }
+    }
+
+    await client.query("BEGIN");
+
+    if (googleUserId) {
+      const currentBusiness = await client.query(
+        "SELECT business_id FROM business WHERE user_id = $1",
+        [currentUserId],
+      );
+
+      if (currentBusiness.rows.length === 0 && googleBusinessId) {
+        await client.query(
+          "UPDATE business SET user_id = $1 WHERE business_id = $2",
+          [currentUserId, googleBusinessId],
+        );
+      } else if (currentBusiness.rows.length > 0 && googleBusinessId) {
+        const currentBizId = currentBusiness.rows[0].business_id;
+        await client.query(
+          "UPDATE products SET business_id = $1 WHERE business_id = $2",
+          [currentBizId, googleBusinessId],
+        );
+        await client.query("DELETE FROM business WHERE business_id = $1", [
+          googleBusinessId,
+        ]);
+      }
+    }
+
+    const currentCheck = await client.query(
+      "SELECT google_uid FROM users WHERE user_id = $1",
+      [currentUserId],
+    );
+    if (!currentCheck.rows[0].google_uid) {
+      await client.query(
+        `UPDATE users 
+         SET google_uid = $1, 
+             provider = CASE 
+               WHEN provider = 'local' THEN 'both' 
+               ELSE provider 
+             END,
+             name = COALESCE($2, name)
+         WHERE user_id = $3`,
+        [uid, name, currentUserId],
+      );
+    }
+
+    if (googleUserId) {
+      await client.query("DELETE FROM users WHERE user_id = $1", [
+        googleUserId,
+      ]);
+    }
+
+    await client.query("COMMIT");
+
+    const updated = await client.query(
+      "SELECT user_id, name, email, role, provider FROM users WHERE user_id = $1",
+      [currentUserId],
+    );
+
+    res.json({
+      message: "Akaun Google berjaya dipautkan dan digabungkan.",
+      user: updated.rows[0],
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("LINK GOOGLE ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  } finally {
+    client.release();
+  }
+});
+
+// ----------------------
+// REGISTER (with invite support)
 // ----------------------
 app.post("/register", async (req, res) => {
+  const client = await pool.connect();
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, inviteToken, businessId } = req.body;
     if (!name || !email || !password)
       return res
         .status(400)
@@ -240,20 +389,55 @@ app.post("/register", async (req, res) => {
     if (userExists.rows.length > 0)
       return res.status(400).json({ message: "E-mel sudah didaftarkan." });
 
+    let role = "user";
+    let business_id = null;
+
+    // ── VALIDATE INVITE IF PROVIDED ──
+    if (inviteToken && businessId) {
+      const inviteCheck = await client.query(
+        `SELECT * FROM invites 
+         WHERE token = $1 AND business_id = $2 AND used = false 
+         AND expires_at > NOW()`,
+        [inviteToken, businessId],
+      );
+
+      if (inviteCheck.rows.length === 0) {
+        return res.status(400).json({
+          message: "Pautan jemputan tidak sah atau sudah tamat tempoh.",
+        });
+      }
+
+      // Mark invite as used
+      await client.query("UPDATE invites SET used = true WHERE token = $1", [
+        inviteToken,
+      ]);
+
+      role = "staff";
+      business_id = businessId;
+    }
+
+    await client.query("BEGIN");
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = await pool.query(
-      `INSERT INTO users (name, email, password, role, provider)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING user_id, name, email, role, created_at`,
-      [name, email, hashedPassword, "user", "local"],
+    const newUser = await client.query(
+      `INSERT INTO users (name, email, password, role, provider, business_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING user_id, name, email, role, created_at, business_id`,
+      [name, email, hashedPassword, role, "local", business_id],
     );
 
-    res
-      .status(201)
-      .json({ message: "Akaun berjaya dicipta.", user: newUser.rows[0] });
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      message: "Akaun berjaya dicipta.",
+      user: newUser.rows[0],
+    });
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error("REGISTER ERROR:", err);
     res.status(500).json({ message: "Server error." });
+  } finally {
+    client.release();
   }
 });
 
@@ -319,7 +503,7 @@ app.post("/login", async (req, res) => {
 app.get("/me", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT user_id, name, email, role, created_at FROM users WHERE user_id = $1",
+      "SELECT user_id, name, email, role, created_at, contact, gender, provider FROM users WHERE user_id = $1",
       [req.user.user_id],
     );
     if (result.rows.length === 0)
@@ -455,12 +639,11 @@ app.get("/products", authenticateToken, async (req, res) => {
 });
 
 // ----------------------
-// ADD PRODUCT
-// FIX: Use generateId() instead of COUNT(*) to avoid duplicate IDs after deletions
+// ADD PRODUCT (with sale_unit)
 // ----------------------
 app.post("/products", authenticateToken, async (req, res) => {
   try {
-    const { name, description, selling_price, image_url } = req.body;
+    const { name, description, selling_price, image_url, sale_unit } = req.body;
 
     if (!name || !selling_price)
       return res
@@ -475,21 +658,23 @@ app.post("/products", authenticateToken, async (req, res) => {
       return res.status(404).json({ message: "Tiada perniagaan dijumpai." });
 
     const business_id = bizResult.rows[0].business_id;
-
-    // FIX: use generateId to avoid collision when products are deleted
     const product_id = await generateId("products", "product_id", "prd");
 
+    // Use provided sale_unit or default to 'unit'
+    const saleUnit = sale_unit || "unit";
+
     const result = await pool.query(
-      `INSERT INTO products (product_id, business_id, name, description, selling_price, margin_percentage, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      `INSERT INTO products (product_id, business_id, name, description, selling_price, margin_percentage, image_url, sale_unit)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [
         product_id,
         business_id,
         name,
         description || null,
         parseFloat(selling_price),
-        0, // margin starts at 0 — recalculated automatically when costs are added
+        0,
         image_url || null,
+        saleUnit,
       ],
     );
 
@@ -520,28 +705,30 @@ app.get("/products/:product_id", authenticateToken, async (req, res) => {
 });
 
 // ----------------------
-// EDIT PRODUCT
-// FIX: margin_percentage is now optional — it will be recalculated automatically
+// EDIT PRODUCT (with sale_unit)
 // ----------------------
 app.put("/products/:product_id", authenticateToken, async (req, res) => {
   try {
     const { product_id } = req.params;
-    const { name, description, selling_price, image_url } = req.body;
+    const { name, description, selling_price, image_url, sale_unit } = req.body;
 
     if (!selling_price || isNaN(parseFloat(selling_price)))
       return res
         .status(400)
         .json({ message: "Harga jual mesti nombor yang sah." });
 
+    const saleUnit = sale_unit || "unit";
+
     const result = await pool.query(
       `UPDATE products
-       SET name=$1, description=$2, selling_price=$3, image_url=$4
-       WHERE product_id=$5 RETURNING *`,
+       SET name=$1, description=$2, selling_price=$3, image_url=$4, sale_unit=$5
+       WHERE product_id=$6 RETURNING *`,
       [
         name,
         description || null,
         parseFloat(selling_price),
         image_url || null,
+        saleUnit,
         product_id,
       ],
     );
@@ -549,10 +736,8 @@ app.put("/products/:product_id", authenticateToken, async (req, res) => {
     if (result.rows.length === 0)
       return res.status(404).json({ message: "Produk tidak dijumpai." });
 
-    // Selling price changed — recalculate margin
     await recalcMargin(product_id);
 
-    // Return product with freshly recalculated margin
     const updated = await pool.query(
       "SELECT * FROM products WHERE product_id = $1",
       [product_id],
@@ -604,7 +789,6 @@ app.get("/products/:product_id/costs", authenticateToken, async (req, res) => {
 
 // ----------------------
 // ADD COST
-// FIX: recalcMargin() called after insert
 // ----------------------
 app.post("/products/:product_id/costs", authenticateToken, async (req, res) => {
   try {
@@ -649,7 +833,6 @@ app.post("/products/:product_id/costs", authenticateToken, async (req, res) => {
       ],
     );
 
-    // FIX: recalculate margin after adding a cost
     await recalcMargin(product_id);
 
     res.status(201).json({ cost: result.rows[0] });
@@ -661,7 +844,6 @@ app.post("/products/:product_id/costs", authenticateToken, async (req, res) => {
 
 // ----------------------
 // UPDATE COST
-// FIX: recalcMargin() called after update
 // ----------------------
 app.put("/costs/:costs_id", authenticateToken, async (req, res) => {
   try {
@@ -688,7 +870,6 @@ app.put("/costs/:costs_id", authenticateToken, async (req, res) => {
     if (result.rows.length === 0)
       return res.status(404).json({ message: "Kos tidak dijumpai." });
 
-    // FIX: recalculate margin after updating a cost
     await recalcMargin(result.rows[0].product_id);
 
     res.json({ cost: result.rows[0] });
@@ -700,13 +881,11 @@ app.put("/costs/:costs_id", authenticateToken, async (req, res) => {
 
 // ----------------------
 // DELETE COST
-// FIX: recalcMargin() called after delete
 // ----------------------
 app.delete("/costs/:costs_id", authenticateToken, async (req, res) => {
   try {
     const { costs_id } = req.params;
 
-    // Fetch product_id before deleting so we can recalculate
     const existing = await pool.query(
       "SELECT product_id FROM costs WHERE costs_id = $1",
       [costs_id],
@@ -714,7 +893,6 @@ app.delete("/costs/:costs_id", authenticateToken, async (req, res) => {
 
     await pool.query("DELETE FROM costs WHERE costs_id = $1", [costs_id]);
 
-    // FIX: recalculate margin after deleting a cost
     if (existing.rows.length > 0) {
       await recalcMargin(existing.rows[0].product_id);
     }
@@ -749,7 +927,6 @@ app.get(
 
 // ----------------------
 // ADD PRODUCTION
-// FIX: Now saves units_produced + batch_date, then recalcMargin()
 // ----------------------
 app.post(
   "/products/:product_id/productions",
@@ -763,8 +940,8 @@ app.post(
         unit,
         cost_per_unit,
         total_cost,
-        units_produced, // FIX: was completely ignored before
-        batch_date, // FIX: was completely ignored before
+        units_produced,
+        batch_date,
       } = req.body;
 
       if (!name)
@@ -791,7 +968,6 @@ app.post(
           message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
         });
 
-      // FIX: validate units_produced
       const parsedUnits = parseInt(units_produced);
       if (!units_produced || isNaN(parsedUnits) || parsedUnits <= 0)
         return res
@@ -804,7 +980,6 @@ app.post(
         "pro",
       );
 
-      // FIX: INSERT now includes units_produced and batch_date
       const result = await pool.query(
         `INSERT INTO productions
          (production_id, product_id, name, quantity, unit, cost_per_unit, total_cost, units_produced, batch_date)
@@ -818,12 +993,11 @@ app.post(
           unit || "unit",
           parseFloat(cost_per_unit),
           parseFloat(total_cost),
-          parsedUnits, // FIX
-          batch_date || new Date().toISOString().split("T")[0], // FIX
+          parsedUnits,
+          batch_date || new Date().toISOString().split("T")[0],
         ],
       );
 
-      // FIX: recalculate margin after adding a production row
       await recalcMargin(product_id);
 
       res.status(201).json({ production: result.rows[0] });
@@ -836,7 +1010,6 @@ app.post(
 
 // ----------------------
 // UPDATE PRODUCTION
-// FIX: Now saves units_produced + batch_date, then recalcMargin()
 // ----------------------
 app.put("/productions/:production_id", authenticateToken, async (req, res) => {
   try {
@@ -847,8 +1020,8 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
       unit,
       cost_per_unit,
       total_cost,
-      units_produced, // FIX: was completely ignored before
-      batch_date, // FIX: was completely ignored before
+      units_produced,
+      batch_date,
     } = req.body;
 
     if (isNaN(parseFloat(quantity)) || parseFloat(quantity) <= 0)
@@ -861,14 +1034,12 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
         message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
       });
 
-    // FIX: validate units_produced
     const parsedUnits = parseInt(units_produced);
     if (!units_produced || isNaN(parsedUnits) || parsedUnits <= 0)
       return res
         .status(400)
         .json({ message: "Bilangan unit dihasilkan mesti nombor positif." });
 
-    // FIX: UPDATE now includes units_produced and batch_date
     const result = await pool.query(
       `UPDATE productions
        SET name=$1, quantity=$2, unit=$3, cost_per_unit=$4, total_cost=$5,
@@ -881,8 +1052,8 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
         unit || "unit",
         parseFloat(cost_per_unit),
         parseFloat(total_cost),
-        parsedUnits, // FIX
-        batch_date || new Date().toISOString().split("T")[0], // FIX
+        parsedUnits,
+        batch_date || new Date().toISOString().split("T")[0],
         production_id,
       ],
     );
@@ -890,7 +1061,6 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
     if (result.rows.length === 0)
       return res.status(404).json({ message: "Bahan tidak dijumpai." });
 
-    // FIX: recalculate margin after updating a production row
     await recalcMargin(result.rows[0].product_id);
 
     res.json({ production: result.rows[0] });
@@ -902,7 +1072,6 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
 
 // ----------------------
 // DELETE PRODUCTION
-// FIX: recalcMargin() called after delete
 // ----------------------
 app.delete(
   "/productions/:production_id",
@@ -911,7 +1080,6 @@ app.delete(
     try {
       const { production_id } = req.params;
 
-      // Fetch product_id before deleting so we can recalculate
       const existing = await pool.query(
         "SELECT product_id FROM productions WHERE production_id = $1",
         [production_id],
@@ -921,7 +1089,6 @@ app.delete(
         production_id,
       ]);
 
-      // FIX: recalculate margin after deleting a production row
       if (existing.rows.length > 0) {
         await recalcMargin(existing.rows[0].product_id);
       }
@@ -933,10 +1100,349 @@ app.delete(
     }
   },
 );
+
+// ----------------------
+// UPDATE USER PROFILE
+// ----------------------
+app.put("/me", authenticateToken, async (req, res) => {
+  try {
+    const { name, email, contact, gender } = req.body;
+    const user_id = req.user.user_id;
+
+    if (email) {
+      const existing = await pool.query(
+        "SELECT user_id FROM users WHERE email = $1 AND user_id != $2",
+        [email, user_id],
+      );
+      if (existing.rows.length > 0) {
+        return res.status(400).json({ message: "E-mel sudah digunakan." });
+      }
+    }
+
+    let query = "UPDATE users SET ";
+    const params = [];
+    let idx = 1;
+
+    if (name) {
+      query += `name = $${idx}, `;
+      params.push(name);
+      idx++;
+    }
+    if (email) {
+      query += `email = $${idx}, `;
+      params.push(email);
+      idx++;
+    }
+    if (contact !== undefined) {
+      query += `contact = $${idx}, `;
+      params.push(contact);
+      idx++;
+    }
+    if (gender) {
+      query += `gender = $${idx}, `;
+      params.push(gender);
+      idx++;
+    }
+
+    query = query.slice(0, -2);
+    query += ` WHERE user_id = $${idx} RETURNING user_id, name, email, role, contact, gender, provider`;
+    params.push(user_id);
+
+    const result = await pool.query(query, params);
+    res.json({ user: result.rows[0] });
+  } catch (err) {
+    console.error("UPDATE USER ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ----------------------
+// CHANGE PASSWORD
+// ----------------------
+app.post("/change-password", authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const user_id = req.user.user_id;
+
+    const result = await pool.query(
+      "SELECT password FROM users WHERE user_id = $1",
+      [user_id],
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Pengguna tidak dijumpai." });
+    }
+    const user = result.rows[0];
+
+    if (!user.password) {
+      return res
+        .status(400)
+        .json({ message: "Akaun Google tidak mempunyai kata laluan." });
+    }
+
+    const match = await bcrypt.compare(currentPassword, user.password);
+    if (!match) {
+      return res.status(400).json({ message: "Kata laluan semasa tidak sah." });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await pool.query("UPDATE users SET password = $1 WHERE user_id = $2", [
+      hashed,
+      user_id,
+    ]);
+
+    res.json({ message: "Kata laluan berjaya ditukar." });
+  } catch (err) {
+    console.error("CHANGE PASSWORD ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── GENERATE STAFF INVITE LINK ──────────────────────────────────────────
+app.post("/business/generate-invite", authenticateToken, async (req, res) => {
+  try {
+    const user_id = req.user.user_id;
+
+    const userCheck = await pool.query(
+      "SELECT role FROM users WHERE user_id = $1",
+      [user_id],
+    );
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Pengguna tidak dijumpai." });
+    }
+    if (
+      userCheck.rows[0].role !== "business_owner" &&
+      userCheck.rows[0].role !== "admin"
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Hanya pemilik perniagaan boleh menjana pautan." });
+    }
+
+    const bizResult = await pool.query(
+      "SELECT business_id FROM business WHERE user_id = $1",
+      [user_id],
+    );
+    if (bizResult.rows.length === 0) {
+      return res.status(404).json({ message: "Perniagaan tidak dijumpai." });
+    }
+    const business_id = bizResult.rows[0].business_id;
+
+    const crypto = require("crypto");
+    const token = crypto.randomBytes(32).toString("hex");
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    const invite_id = await generateId("invites", "invite_id", "inv");
+
+    await pool.query(
+      `INSERT INTO invites (invite_id, business_id, token, email, used, expires_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [invite_id, business_id, token, null, false, expiresAt],
+    );
+
+    const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const inviteLink = `${baseUrl}/register?invite=${token}&business=${business_id}`;
+
+    res.json({ inviteLink });
+  } catch (err) {
+    console.error("GENERATE INVITE ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── GET EXISTING INVITE LINK ──────────────────────────────────────────
+app.get("/business/invite-link", authenticateToken, async (req, res) => {
+  try {
+    const user_id = req.user.user_id;
+
+    // Check if user is business owner
+    const userCheck = await pool.query(
+      "SELECT role FROM users WHERE user_id = $1",
+      [user_id],
+    );
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Pengguna tidak dijumpai." });
+    }
+    if (
+      userCheck.rows[0].role !== "business_owner" &&
+      userCheck.rows[0].role !== "admin"
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Hanya pemilik perniagaan boleh mengakses pautan." });
+    }
+
+    // Get business_id
+    const bizResult = await pool.query(
+      "SELECT business_id FROM business WHERE user_id = $1",
+      [user_id],
+    );
+    if (bizResult.rows.length === 0) {
+      return res.status(404).json({ message: "Perniagaan tidak dijumpai." });
+    }
+    const business_id = bizResult.rows[0].business_id;
+
+    // Get the most recent valid invite
+    const result = await pool.query(
+      `SELECT token, expires_at 
+       FROM invites 
+       WHERE business_id = $1 AND used = false AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [business_id],
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({ inviteLink: null });
+    }
+
+    const token = result.rows[0].token;
+    const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const inviteLink = `${baseUrl}/register?invite=${token}&business=${business_id}`;
+
+    res.json({ inviteLink });
+  } catch (err) {
+    console.error("GET INVITE LINK ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── VERIFY INVITE TOKEN ──────────────────────────────────────────────────
+app.get("/invites/verify", async (req, res) => {
+  try {
+    const { token, business } = req.query;
+    if (!token || !business) {
+      return res
+        .status(400)
+        .json({ message: "Token dan business diperlukan." });
+    }
+
+    const result = await pool.query(
+      `SELECT * FROM invites 
+       WHERE token = $1 AND business_id = $2 AND used = false 
+       AND expires_at > NOW()`,
+      [token, business],
+    );
+
+    if (result.rows.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Pautan tidak sah atau sudah tamat tempoh." });
+    }
+
+    res.json({ valid: true, business_id: business });
+  } catch (err) {
+    console.error("VERIFY INVITE ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ----------------------
+// UPDATE BUSINESS
+// ----------------------
+app.put("/business", authenticateToken, async (req, res) => {
+  try {
+    const { name, description, type } = req.body;
+    const user_id = req.user.user_id;
+
+    const bizResult = await pool.query(
+      "SELECT business_id FROM business WHERE user_id = $1",
+      [user_id],
+    );
+    if (bizResult.rows.length === 0) {
+      return res.status(404).json({ message: "Perniagaan tidak dijumpai." });
+    }
+    const business_id = bizResult.rows[0].business_id;
+
+    let query = "UPDATE business SET ";
+    const params = [];
+    let idx = 1;
+
+    if (name) {
+      query += `name = $${idx}, `;
+      params.push(name);
+      idx++;
+    }
+    if (description) {
+      query += `description = $${idx}, `;
+      params.push(description);
+      idx++;
+    }
+    if (type) {
+      if (!["home", "stall"].includes(type)) {
+        return res.status(400).json({ message: "Jenis perniagaan tidak sah." });
+      }
+      query += `type = $${idx}, `;
+      params.push(type);
+      idx++;
+    }
+
+    query = query.slice(0, -2);
+    query += ` WHERE business_id = $${idx} RETURNING *`;
+    params.push(business_id);
+
+    const result = await pool.query(query, params);
+    res.json({ business: result.rows[0] });
+  } catch (err) {
+    console.error("UPDATE BUSINESS ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ─── GET STAFF LIST FOR BUSINESS ──────────────────────────────────────────
+app.get("/business/staff", authenticateToken, async (req, res) => {
+  try {
+    const user_id = req.user.user_id;
+
+    // Check if user is business owner or admin
+    const userCheck = await pool.query(
+      "SELECT role FROM users WHERE user_id = $1",
+      [user_id],
+    );
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Pengguna tidak dijumpai." });
+    }
+    if (
+      userCheck.rows[0].role !== "business_owner" &&
+      userCheck.rows[0].role !== "admin"
+    ) {
+      return res.status(403).json({
+        message: "Hanya pemilik perniagaan boleh melihat senarai staff.",
+      });
+    }
+
+    // Get business_id
+    const bizResult = await pool.query(
+      "SELECT business_id FROM business WHERE user_id = $1",
+      [user_id],
+    );
+    if (bizResult.rows.length === 0) {
+      return res.status(404).json({ message: "Perniagaan tidak dijumpai." });
+    }
+    const business_id = bizResult.rows[0].business_id;
+
+    // Get all staff users with this business_id
+    const result = await pool.query(
+      "SELECT user_id, name, email, role FROM users WHERE business_id = $1 AND role = 'staff' ORDER BY name ASC",
+      [business_id],
+    );
+
+    res.json({ staff: result.rows });
+  } catch (err) {
+    console.error("GET STAFF ERROR:", err);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ----------------------
+// ROOT
+// ----------------------
 app.get("/", (req, res) => {
   res.send("Database connected and server is running!");
 });
 
+// ----------------------
+// START SERVER
 // ----------------------
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);

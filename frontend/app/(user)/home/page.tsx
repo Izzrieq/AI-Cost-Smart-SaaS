@@ -14,7 +14,6 @@ interface User {
   name: string;
   email: string;
   role: string;
-  gender?: "male" | "female";
 }
 
 interface Business {
