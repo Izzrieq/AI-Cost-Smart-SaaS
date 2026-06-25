@@ -1,16 +1,18 @@
+// app/register/page.tsx
 "use client";
 
+import { Suspense } from "react";
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { useRouter, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
 import { API_URL } from "@/lib/api";
-
 import { signInWithPopup } from "firebase/auth";
 import { auth, provider } from "@/lib/firebase";
 
-export default function RegisterPage() {
+// ─── Inner component that uses useSearchParams ──────────────────
+function RegisterContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -20,7 +22,6 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // ─── INVITE DETECTION ────────────────────────────────────────────────
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [businessId, setBusinessId] = useState<string | null>(null);
   const [isInviteValid, setIsInviteValid] = useState<boolean | null>(null);
@@ -51,7 +52,7 @@ export default function RegisterPage() {
         setIsInviteValid(false);
         toast.error("Pautan tidak sah atau sudah tamat tempoh.");
       }
-    } catch (err) {
+    } catch {
       setIsInviteValid(false);
       toast.error("Pautan jemputan tidak sah.");
     } finally {
@@ -59,46 +60,30 @@ export default function RegisterPage() {
     }
   };
 
-  // ─── REGISTER HANDLER ──────────────────────────────────────────────────
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!name || !email || !password) {
       toast.error("Semua ruangan perlu diisi.");
       return;
     }
-
     if (password.length < 6) {
       toast.error("Kata laluan mesti sekurang-kurangnya 6 aksara.");
       return;
     }
-
     setLoading(true);
-
     try {
-      const payload: any = {
-        name,
-        email,
-        password,
-      };
-
-      // Jika ada invite token, hantar bersama
+      const payload: any = { name, email, password };
       if (inviteToken && businessId && isInviteValid) {
         payload.inviteToken = inviteToken;
         payload.businessId = businessId;
       }
-
       const res = await axios.post(`${API_URL}/register`, payload);
-
-      if (res.data.user.role === "staff") {
-        toast.success("Anda berjaya didaftarkan sebagai staff!");
-      } else {
-        toast.success("Akaun berjaya dicipta!");
-      }
-
-      setTimeout(() => {
-        router.push("/login");
-      }, 800);
+      toast.success(
+        res.data.user.role === "staff"
+          ? "Anda berjaya didaftarkan sebagai staff!"
+          : "Akaun berjaya dicipta!"
+      );
+      setTimeout(() => router.push("/login"), 800);
     } catch (err) {
       let message = "Ralat server. Sila cuba lagi.";
       if (axios.isAxiosError(err)) {
@@ -110,37 +95,29 @@ export default function RegisterPage() {
     }
   };
 
-  // ─── GOOGLE REGISTER ──────────────────────────────────────────────────
   const handleGoogleRegister = async () => {
     try {
       setLoading(true);
-
       const result = await signInWithPopup(auth, provider);
-      const firebaseUser = result.user;
-      const idToken = await firebaseUser.getIdToken();
-
+      const idToken = await result.user.getIdToken();
       let payload: any = { token: idToken };
       if (inviteToken && businessId && isInviteValid) {
         payload.inviteToken = inviteToken;
         payload.businessId = businessId;
       }
-
       const res = await axios.post(`${API_URL}/auth/google`, payload);
-
       const user = res.data.user;
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(user));
-
-      toast.success(user.role === "staff" ? "Staff berjaya didaftarkan!" : "Akaun berjaya dibuat!");
-
+      toast.success(
+        user.role === "staff"
+          ? "Staff berjaya didaftarkan!"
+          : "Akaun berjaya dibuat!"
+      );
       setTimeout(() => {
-        if (user.role === "admin") {
-          router.push("/dashboard");
-        } else if (user.role === "staff") {
-          router.push("/staff-dashboard");
-        } else {
-          router.push("/home");
-        }
+        if (user.role === "admin") router.push("/dashboard");
+        else if (user.role === "staff") router.push("/staff-dashboard");
+        else router.push("/home");
       }, 500);
     } catch (err) {
       console.error(err);
@@ -154,9 +131,7 @@ export default function RegisterPage() {
     }
   };
 
-  // ─── RENDER ──────────────────────────────────────────────────────────────
-
-  // Show loading while verifying invite
+  // ─── RENDER (your existing JSX) ──────────────────────────────
   if (verifyingInvite) {
     return (
       <div style={{ minHeight: "100vh", background: "#d6eeff", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -169,7 +144,6 @@ export default function RegisterPage() {
     );
   }
 
-  // Show error if invite invalid
   if (inviteToken && !isInviteValid) {
     return (
       <div style={{ minHeight: "100vh", background: "#d6eeff", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -523,14 +497,11 @@ export default function RegisterPage() {
       <div className="blob-bottom" />
 
       <div className="card">
-
-        {/* Step badge */}
         <div className="step-badge">
           <span className="step-dot" />
           {inviteToken ? "Daftar Sebagai Staff" : "Cipta Akaun Baru"}
         </div>
 
-        {/* Invite Badge */}
         {inviteToken && isInviteValid && (
           <div className="invite-badge">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -541,7 +512,6 @@ export default function RegisterPage() {
           </div>
         )}
 
-        {/* Illustration */}
         <div className="illustration-wrap">
           <svg width="88" height="88" viewBox="0 0 88 88" fill="none" xmlns="http://www.w3.org/2000/svg">
             <circle cx="44" cy="44" r="44" fill="#dbeeff"/>
@@ -556,9 +526,8 @@ export default function RegisterPage() {
           </svg>
         </div>
 
-        {/* Greeting */}
         <h1 className="greeting">
-          {inviteToken ? "Sertai Pasukan" : "Buat <em>Akaun</em> Anda"}
+          {inviteToken ? "Sertai Pasukan" : "Buat Akaun Anda"}
         </h1>
         <p className="slogan">
           {inviteToken
@@ -568,10 +537,7 @@ export default function RegisterPage() {
 
         <hr className="divider" />
 
-        {/* Form */}
         <form onSubmit={handleRegister}>
-
-          {/* Name */}
           <div className="field-wrap">
             <span className="field-icon">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -588,7 +554,6 @@ export default function RegisterPage() {
             />
           </div>
 
-          {/* Email */}
           <div className="field-wrap">
             <span className="field-icon">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -605,7 +570,6 @@ export default function RegisterPage() {
             />
           </div>
 
-          {/* Password */}
           <div className="field-wrap">
             <span className="field-icon">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -642,7 +606,6 @@ export default function RegisterPage() {
             </button>
           </div>
 
-          {/* Submit */}
           <button type="submit" className="btn-submit" disabled={loading}>
             {loading ? (
               <>
@@ -662,12 +625,10 @@ export default function RegisterPage() {
             )}
           </button>
 
-          {/* OR divider */}
           <div className="or-divider">
             <span>atau</span>
           </div>
 
-          {/* Google Sign-Up */}
           <button
             type="button"
             className="btn-google"
@@ -682,18 +643,24 @@ export default function RegisterPage() {
             </svg>
             {inviteToken ? "Daftar Staff Dengan Google" : "Daftar Dengan Google"}
           </button>
-
         </form>
 
-        {/* Footer */}
         <div className="footer-link">
           <p>Sudah ada akaun?</p>
           <Link href="/login" className="btn-outline">
             Log Masuk
           </Link>
         </div>
-
       </div>
     </>
+  );
+}
+
+// ─── Main export – wraps the content in Suspense ──────────────
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "#d6eeff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Plus Jakarta Sans, sans-serif" }}>Loading...</div>}>
+      <RegisterContent />
+    </Suspense>
   );
 }
