@@ -924,9 +924,8 @@ app.get(
     }
   },
 );
-
 // ----------------------
-// ADD PRODUCTION
+// ADD PRODUCTION (with purchase fields)
 // ----------------------
 app.post(
   "/products/:product_id/productions",
@@ -942,6 +941,9 @@ app.post(
         total_cost,
         units_produced,
         batch_date,
+        purchase_price, // <-- NEW
+        purchase_qty, // <-- NEW
+        purchase_unit, // <-- NEW
       } = req.body;
 
       if (!name)
@@ -980,10 +982,11 @@ app.post(
         "pro",
       );
 
+      // MODIFIED: Added purchase_price, purchase_qty, purchase_unit to INSERT
       const result = await pool.query(
         `INSERT INTO productions
-         (production_id, product_id, name, quantity, unit, cost_per_unit, total_cost, units_produced, batch_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (production_id, product_id, name, quantity, unit, cost_per_unit, total_cost, units_produced, batch_date, purchase_price, purchase_qty, purchase_unit)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
         [
           production_id,
@@ -995,6 +998,9 @@ app.post(
           parseFloat(total_cost),
           parsedUnits,
           batch_date || new Date().toISOString().split("T")[0],
+          parseFloat(purchase_price) || 0, // $10
+          parseFloat(purchase_qty) || 0, // $11
+          purchase_unit || "kg", // $12
         ],
       );
 
@@ -1009,7 +1015,7 @@ app.post(
 );
 
 // ----------------------
-// UPDATE PRODUCTION
+// UPDATE PRODUCTION (with purchase fields)
 // ----------------------
 app.put("/productions/:production_id", authenticateToken, async (req, res) => {
   try {
@@ -1022,6 +1028,9 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
       total_cost,
       units_produced,
       batch_date,
+      purchase_price, // <-- NEW
+      purchase_qty, // <-- NEW
+      purchase_unit, // <-- NEW
     } = req.body;
 
     if (isNaN(parseFloat(quantity)) || parseFloat(quantity) <= 0)
@@ -1040,11 +1049,12 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
         .status(400)
         .json({ message: "Bilangan unit dihasilkan mesti nombor positif." });
 
+    // MODIFIED: Added purchase_price, purchase_qty, purchase_unit to UPDATE
     const result = await pool.query(
       `UPDATE productions
        SET name=$1, quantity=$2, unit=$3, cost_per_unit=$4, total_cost=$5,
-           units_produced=$6, batch_date=$7
-       WHERE production_id=$8
+           units_produced=$6, batch_date=$7, purchase_price=$8, purchase_qty=$9, purchase_unit=$10
+       WHERE production_id=$11
        RETURNING *`,
       [
         name ?? null,
@@ -1054,7 +1064,10 @@ app.put("/productions/:production_id", authenticateToken, async (req, res) => {
         parseFloat(total_cost),
         parsedUnits,
         batch_date || new Date().toISOString().split("T")[0],
-        production_id,
+        parseFloat(purchase_price) || 0, // $8
+        parseFloat(purchase_qty) || 0, // $9
+        purchase_unit || "kg", // $10
+        production_id, // $11
       ],
     );
 
