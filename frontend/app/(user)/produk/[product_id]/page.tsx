@@ -241,22 +241,21 @@ const recalcCosts = (
   const totalCost = costPerBaseUnit * gunaBase;
   return {
     cost_per_unit: costPerBaseUnit > 0 ? costPerBaseUnit.toFixed(6) : "",
-    total_cost: totalCost > 0 ? totalCost.toFixed(4) : "",
+    total_cost: totalCost > 0 ? totalCost.toFixed(2) : "",
   };
 };
 
 // ─── NUMBER FORMATTING HELPERS ─────────────────────────────────────────────
 const formatPrice = (value: number | undefined | null): string => {
   if (value === undefined || value === null || isNaN(Number(value))) return "";
-  return Number(value).toFixed(2); // Always 2 decimals → "6.50"
+  return Number(value).toFixed(2);
 };
 
 const formatQty = (value: number | undefined | null): string => {
   if (value === undefined || value === null || isNaN(Number(value))) return "";
   const num = Number(value);
-  // If whole number, show without decimals; else show with decimals (trim trailing zeros)
   if (Number.isInteger(num)) return num.toString();
-  return num.toFixed(2).replace(/\.?0+$/, ""); // "12.50" → "12.5", "12.00" → "12"
+  return num.toFixed(2).replace(/\.?0+$/, "");
 };
 
 // ─── PROD FORM TYPE ───────────────────────────────────────────────────────────
@@ -579,7 +578,6 @@ export default function ProductDetailPage() {
 
   // ── EDIT / DELETE PRODUCTION ──────────────────────────────────────────────
   const openEditProduction = (p: Production) => {
-    // ── Fallback: if no purchase data, derive from existing total_cost ──
     let purchasePrice = p.purchase_price;
     let purchaseQty = p.purchase_qty;
     let purchaseUnit = p.purchase_unit || "kg";
@@ -599,7 +597,6 @@ export default function ProductDetailPage() {
       }
     }
 
-    // ── Set form state with formatted values ──
     setSelectedProduction(p);
     setEditProdForm({
       name: p.name ?? "",
@@ -1024,7 +1021,7 @@ export default function ProductDetailPage() {
                         </div>
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        <div className="pd-item-amount">RM {parseFloat(String(p.total_cost)).toFixed(4)}</div>
+                        <div className="pd-item-amount">RM {parseFloat(String(p.total_cost)).toFixed(2)}</div>
                         <div className="pd-item-amount-sub">{formatQuantityDisplay(p.quantity, p.unit)} {p.unit}</div>
                       </div>
                       <div className="pd-item-arrow"><IconArrowRight /></div>
@@ -1200,19 +1197,19 @@ export default function ProductDetailPage() {
 
           <div className="pd-ringkasan">
             <div className="pd-ringkasan-title">Ringkasan Kos Batch</div>
-            <div className="pd-cost-row"><span className="pd-cost-row-label">🥄 Bahan Mentah</span><span className="pd-cost-row-val">RM {bahanTotal.toFixed(4)}</span></div>
+            <div className="pd-cost-row"><span className="pd-cost-row-label">🥄 Bahan Mentah</span><span className="pd-cost-row-val">RM {bahanTotal.toFixed(2)}</span></div>
             <div className="pd-cost-row"><span className="pd-cost-row-label">👷 Tenaga Kerja</span><span className="pd-cost-row-val">RM {tenagaTotal.toFixed(2)}</span></div>
             <div className="pd-cost-row"><span className="pd-cost-row-label">⚡ Overhead / Lain-Lain</span><span className="pd-cost-row-val">RM {lainTotal.toFixed(2)}</span></div>
             <div className="pd-cost-divider" />
             <div className="pd-cost-row">
               <span className="pd-cost-row-label" style={{ fontWeight: 700, color: "#1e293b" }}>Total Kos Batch</span>
-              <span className="pd-cost-row-val" style={{ fontSize: 14, color: "#1e293b" }}>RM {cvp.totalBatchCost.toFixed(4)}</span>
+              <span className="pd-cost-row-val" style={{ fontSize: 14, color: "#1e293b" }}>RM {cvp.totalBatchCost.toFixed(2)}</span>
             </div>
-            <div className="pd-cost-row"><span className="pd-cost-row-label">Kos Berubah / Unit ({unitsProduced} unit)</span><span className="pd-cost-row-val">RM {cvp.variableCostPerUnit.toFixed(4)}</span></div>
+            <div className="pd-cost-row"><span className="pd-cost-row-label">Kos Berubah / Unit ({unitsProduced} unit)</span><span className="pd-cost-row-val">RM {cvp.variableCostPerUnit.toFixed(2)}</span></div>
             <div className="pd-cost-row"><span className="pd-cost-row-label">Kos Tetap / Batch</span><span className="pd-cost-row-val">RM {cvp.totalFixedCost.toFixed(2)}</span></div>
             <div className="pd-cost-row">
               <span className="pd-cost-row-label" style={{ fontWeight: 600, color: "#334155" }}>Kos Seunit (Total)</span>
-              <span className="pd-cost-row-val" style={{ color: "#334155" }}>RM {cvp.costPerUnitTotal.toFixed(4)}</span>
+              <span className="pd-cost-row-val" style={{ color: "#334155" }}>RM {cvp.costPerUnitTotal.toFixed(2)}</span>
             </div>
             <div className="pd-cost-divider" />
             <div className="pd-cost-total-row">
@@ -1375,7 +1372,7 @@ export default function ProductDetailPage() {
                 <div className="pd-field pd-field-readonly">
                   <label className="pd-field-label">Jumlah Kos Digunakan (Auto)</label>
                   <input type="text" placeholder="0.0000" readOnly
-                    value={prodForm.total_cost ? `RM ${parseFloat(prodForm.total_cost).toFixed(4)}` : ""} />
+                    value={prodForm.total_cost ? `RM ${parseFloat(prodForm.total_cost).toFixed(2)}` : ""} />
                 </div>
               </div>
 
@@ -1383,14 +1380,14 @@ export default function ProductDetailPage() {
                 <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 12, padding: "10px 12px", marginBottom: 12, fontSize: 11, color: "#15803d", lineHeight: 1.8 }}>
                   ✅ <strong>Kiraan:</strong><br />
                   Kos/unit kecil = RM{parseFloat(prodForm.purchase_price).toFixed(2)} ÷ {convertToBaseUnit(parseFloat(prodForm.purchase_qty) || 0, prodForm.purchase_unit).toFixed(0)}{getBaseUnitDisplay(prodForm.purchase_unit)} = RM{prodForm.cost_per_unit ? parseFloat(prodForm.cost_per_unit).toFixed(6) : "0"}/{getBaseUnitDisplay(prodForm.purchase_unit)}<br />
-                  Kos digunakan = RM{prodForm.cost_per_unit ? parseFloat(prodForm.cost_per_unit).toFixed(6) : "0"} × {convertToBaseUnit(parseFloat(prodForm.quantity) || 0, prodForm.unit).toFixed(0)}{getBaseUnitDisplay(prodForm.unit)} = <strong>RM{prodForm.total_cost ? parseFloat(prodForm.total_cost).toFixed(4) : "0"}</strong>
+                  Kos digunakan = RM{prodForm.cost_per_unit ? parseFloat(prodForm.cost_per_unit).toFixed(6) : "0"} × {convertToBaseUnit(parseFloat(prodForm.quantity) || 0, prodForm.unit).toFixed(0)}{getBaseUnitDisplay(prodForm.unit)} = <strong>RM{prodForm.total_cost ? parseFloat(prodForm.total_cost).toFixed(2) : "0"}</strong>
                 </div>
               ) : (
                 <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "10px 12px", marginBottom: 12, fontSize: 11, color: "#92400e", lineHeight: 1.6 }}>
                   💡 <strong>Contoh Tepung Gandum:</strong><br />
                   Harga belian: RM1.35 · Kuantiti belian: 1 kg (=1000g)<br />
                   Kuantiti digunakan: 250 g<br />
-                  Kos = RM1.35 ÷ 1000g × 250g = <strong>RM0.3375</strong>
+                  Kos = RM1.35 ÷ 1000g × 250g = <strong>RM0.34</strong>
                 </div>
               )}
 
@@ -1568,7 +1565,7 @@ export default function ProductDetailPage() {
                 <div className="pd-field pd-field-readonly">
                   <label className="pd-field-label">Jumlah Kos (Auto)</label>
                   <input type="text" placeholder="0.0000" readOnly
-                    value={editProdForm.total_cost ? `RM ${parseFloat(editProdForm.total_cost).toFixed(4)}` : ""} />
+                    value={editProdForm.total_cost ? `RM ${parseFloat(editProdForm.total_cost).toFixed(2)}` : ""} />
                 </div>
               </div>
 
@@ -1576,7 +1573,7 @@ export default function ProductDetailPage() {
                 <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 12, padding: "10px 12px", marginBottom: 12, fontSize: 11, color: "#15803d", lineHeight: 1.8 }}>
                   ✅ <strong>Kiraan:</strong><br />
                   Kos/unit kecil = RM{parseFloat(editProdForm.purchase_price).toFixed(2)} ÷ {convertToBaseUnit(parseFloat(editProdForm.purchase_qty) || 0, editProdForm.purchase_unit).toFixed(0)}{getBaseUnitDisplay(editProdForm.purchase_unit)} = RM{editProdForm.cost_per_unit ? parseFloat(editProdForm.cost_per_unit).toFixed(6) : "0"}/{getBaseUnitDisplay(editProdForm.purchase_unit)}<br />
-                  Kos digunakan = RM{editProdForm.cost_per_unit ? parseFloat(editProdForm.cost_per_unit).toFixed(6) : "0"} × {convertToBaseUnit(parseFloat(editProdForm.quantity) || 0, editProdForm.unit).toFixed(0)}{getBaseUnitDisplay(editProdForm.unit)} = <strong>RM{editProdForm.total_cost ? parseFloat(editProdForm.total_cost).toFixed(4) : "0"}</strong>
+                  Kos digunakan = RM{editProdForm.cost_per_unit ? parseFloat(editProdForm.cost_per_unit).toFixed(6) : "0"} × {convertToBaseUnit(parseFloat(editProdForm.quantity) || 0, editProdForm.unit).toFixed(0)}{getBaseUnitDisplay(editProdForm.unit)} = <strong>RM{editProdForm.total_cost ? parseFloat(editProdForm.total_cost).toFixed(2) : "0"}</strong>
                 </div>
               )}
 
