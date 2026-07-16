@@ -1405,7 +1405,7 @@ export default function ProductDetailPage() {
             <div className="pd-modal-sheet" onClick={e => e.stopPropagation()}>
               <div className="pd-modal-handle" />
               <div className="pd-modal-title-row">
-                <span className="pd-modal-title">{tab === "tenaga" ? "Tambah Tenaga Kerja" : "Tambah Utiliti"}</span>
+                <span className="pd-modal-title">{tab === "tenaga" ? "Tambah Tenaga Kerja" : "Tambah Kos"}</span>
                 <button className="pd-modal-close" onClick={() => setShowAddCost(false)}><IconClose /></button>
               </div>
               <div className="pd-field">
