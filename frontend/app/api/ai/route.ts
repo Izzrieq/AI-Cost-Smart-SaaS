@@ -71,6 +71,7 @@ async function generateWithRetry(
 }
 
 export async function POST(req: Request) {
+  console.log("API Key (last 4 chars):", process.env.GEMINI_API_KEY?.slice(-4));
   try {
     const { prompt, stats, products } = await req.json();
 
