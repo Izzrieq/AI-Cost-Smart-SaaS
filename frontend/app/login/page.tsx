@@ -5,6 +5,7 @@ import axios from "axios";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import Link from "next/link";
+import Image from "next/image";
 import { API_URL } from "@/lib/api";
 
 import { signInWithPopup } from "firebase/auth";
@@ -42,7 +43,7 @@ export default function LoginPage() {
         return;
       }
 
-      const user = res.data.user; 
+      const user = res.data.user;
 
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(user));
@@ -50,11 +51,11 @@ export default function LoginPage() {
 
       setTimeout(() => {
         if (user.role === "admin") {
-            router.push("/dashboard");
+          router.push("/dashboard");
         } else if (user.role === "staff") {
-            router.push("/staff-dashboard");
+          router.push("/staff-dashboard");
         } else {
-            router.push("/home");
+          router.push("/home");
         }
       }, 500);
     } catch (err) {
@@ -69,64 +70,40 @@ export default function LoginPage() {
   };
 
   const handleGoogleLogin = async () => {
-  try {
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const result = await signInWithPopup(
-      auth,
-      provider
-    );
+      const result = await signInWithPopup(auth, provider);
+      const firebaseUser = result.user;
+      const idToken = await firebaseUser.getIdToken();
 
-    const firebaseUser = result.user;
-
-    const idToken =
-      await firebaseUser.getIdToken();
-
-    const res = await axios.post(
-      `${API_URL}/auth/google`,
-      {
+      const res = await axios.post(`${API_URL}/auth/google`, {
         token: idToken,
+      });
+
+      const user = res.data.user;
+
+      localStorage.setItem("token", res.data.token);
+      localStorage.setItem("user", JSON.stringify(user));
+
+      toast.success("Google login successful");
+
+      if (user.role === "admin") {
+        router.push("/dashboard");
+      } else {
+        router.push("/home");
       }
-    );
-
-    const user = res.data.user;
-
-    localStorage.setItem(
-      "token",
-      res.data.token
-    );
-
-    localStorage.setItem(
-      "user",
-      JSON.stringify(user)
-    );
-
-    toast.success(
-      "Google login successful"
-    );
-
-    if (user.role === "admin") {
-      router.push("/dashboard");
-    } else {
-      router.push("/home");
+    } catch (err) {
+      console.error(err);
+      let message = "Google login failed";
+      if (axios.isAxiosError(err)) {
+        message = err.response?.data?.message || message;
+      }
+      toast.error(message);
+    } finally {
+      setLoading(false);
     }
-  } catch (err) {
-    console.error(err);
-
-    let message =
-      "Google login failed";
-
-    if (axios.isAxiosError(err)) {
-      message =
-        err.response?.data?.message ||
-        message;
-    }
-
-    toast.error(message);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
     <>
@@ -191,7 +168,7 @@ export default function LoginPage() {
           to   { opacity: 1; transform: translateY(0)    scale(1);    }
         }
 
-        /* --- Illustration --- */
+        /* --- Illustration / Logo --- */
         .illus-wrap {
           display: flex;
           justify-content: center;
@@ -201,6 +178,10 @@ export default function LoginPage() {
         @keyframes illus-in {
           from { opacity: 0; transform: translateY(-16px); }
           to   { opacity: 1; transform: translateY(0); }
+        }
+        .logo-image {
+          border-radius: 12px;
+          object-fit: contain;
         }
 
         /* --- Greeting --- */
@@ -234,11 +215,27 @@ export default function LoginPage() {
           line-height: 1.5;
         }
 
-        /* --- Divider --- */
-        .divider {
+        /* --- Divider with "atau" --- */
+        .or-divider {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 22px 0 20px;
+          animation: fadeUp 0.5s ease 0.3s both;
+        }
+        .or-divider::before,
+        .or-divider::after {
+          content: '';
+          flex: 1;
           height: 1px;
-          background: linear-gradient(90deg, transparent, #bcd8ef, transparent);
-          margin-bottom: 28px;
+          background: #bcd8ef;
+        }
+        .or-divider span {
+          font-size: 0.72rem;
+          font-weight: 600;
+          color: #5a8db8;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
         }
 
         /* --- Form --- */
@@ -358,67 +355,71 @@ export default function LoginPage() {
           margin-bottom: 10px;
         }
         .btn-signup {
-        width: 100%;
-        padding: 11px;
-        background: transparent;
-        color: #1a73c9;
-        font-family: 'Plus Jakarta Sans', sans-serif;
-        font-size: 0.88rem;
-        font-weight: 600;
-        border: 1.5px solid #93c4e8;
-        border-radius: 12px;
-        cursor: pointer;
-        letter-spacing: 0.2px;
-        transition: background 0.2s,
-                    border-color 0.2s,
-                    transform 0.15s;
-        text-decoration: none;
-
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-      }
+          width: 100%;
+          padding: 11px;
+          background: transparent;
+          color: #1a73c9;
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          font-size: 0.88rem;
+          font-weight: 600;
+          border: 1.5px solid #93c4e8;
+          border-radius: 12px;
+          cursor: pointer;
+          letter-spacing: 0.2px;
+          transition: background 0.2s,
+                      border-color 0.2s,
+                      transform 0.15s;
+          text-decoration: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+        }
         .btn-signup:hover {
           background: #d4edfb;
           border-color: #3b9ade;
           transform: translateY(-1px);
         }
+        .btn-google {
+          width: 100%;
+          padding: 12px;
+          background: transparent;
+          color: #1a73c9;
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          font-size: 0.88rem;
+          font-weight: 600;
+          border: 1.5px solid #93c4e8;
+          border-radius: 12px;
+          cursor: pointer;
+          letter-spacing: 0.02em;
+          transition: background 0.2s, border-color 0.2s, transform 0.15s;
+          animation: fadeUp 0.5s 0.54s both;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+        }
+        .btn-google:hover:not(:disabled) {
+          background: #dbeeff;
+          border-color: #3b9ade;
+          transform: translateY(-1px);
+        }
+        .btn-google:disabled { opacity: 0.6; cursor: not-allowed; }
       `}</style>
 
       <div className="login-root">
         <div className="login-card">
 
-          {/* Illustration */}
+          {/* Logo */}
           <div className="illus-wrap">
-            <svg width="88" height="88" viewBox="0 0 88 88" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Outer circle */}
-              <circle cx="44" cy="44" r="44" fill="#c7e8fb" />
-              {/* Calculator body */}
-              <rect x="22" y="20" width="44" height="52" rx="7" fill="#2a8fd4" />
-              <rect x="26" y="24" width="36" height="16" rx="4" fill="#9dd5f5" />
-              {/* Display text lines */}
-              <rect x="30" y="30" width="20" height="3" rx="1.5" fill="#0e4f82" opacity="0.5" />
-              <rect x="30" y="35" width="12" height="2.5" rx="1.2" fill="#0e4f82" opacity="0.35" />
-              {/* Buttons grid */}
-              {[0,1,2,3].map(col => [0,1,2].map(row => (
-                <rect
-                  key={`${col}-${row}`}
-                  x={28 + col * 9}
-                  y={46 + row * 8}
-                  width="6"
-                  height="5"
-                  rx="1.5"
-                  fill={row === 0 ? "#9dd5f5" : "#60b8ea"}
-                  opacity={col === 3 && row === 2 ? "1" : "0.85"}
-                />
-              )))}
-              {/* Accent equals button */}
-              <rect x={28 + 3 * 9} y={46 + 2 * 8} width="6" height="5" rx="1.5" fill="#f0a500" />
-              {/* Small sparkle */}
-              <circle cx="67" cy="22" r="4" fill="#bae0fc" opacity="0.7" />
-              <circle cx="72" cy="30" r="2" fill="#93c4e8" opacity="0.5" />
-            </svg>
+            <Image
+              src="/images/front-logo.png"
+              alt="CostSmart logo"
+              width={250}
+              height={100}
+              className="logo-image"
+              priority
+            />
           </div>
 
           {/* Greeting */}
@@ -427,7 +428,6 @@ export default function LoginPage() {
             <p className="greeting-slogan">Jom mula kira kos dengan lebih sistematik</p>
           </div>
 
-          <div className="divider" />
 
           {/* Form */}
           <form onSubmit={handleLogin} noValidate>
@@ -509,9 +509,16 @@ export default function LoginPage() {
                 </>
               )}
             </button>
+
+            {/* Divider with "atau" – like in register */}
+            <div className="or-divider">
+              <span>atau</span>
+            </div>
+
+            {/* Google login button – now with same style as register */}
             <button
               type="button"
-              className="btn-signup"
+              className="btn-google"
               onClick={handleGoogleLogin}
               disabled={loading}
             >
@@ -537,7 +544,6 @@ export default function LoginPage() {
                   d="M43.6 20.5H42V20H24v8h11.3c-1 2.8-3 5.1-5.8 6.5l6.2 5.2C39.8 35.9 44 30.6 44 24c0-1.3-.1-2.3-.4-3.5z"
                 />
               </svg>
-
               Log Masuk Dengan Google
             </button>
           </form>
