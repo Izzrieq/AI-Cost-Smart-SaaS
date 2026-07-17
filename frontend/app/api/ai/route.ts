@@ -3,14 +3,12 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// ─── Models to try (most preferred first) ──────────────────────
+// ─── Models with available free quota ──────────────────────────
 const MODEL_NAMES = [
-  "gemini-3.5-flash",     // ✅ Ada kuota: 10/20 RPD
-  "gemini-2.5-flash",     // ✅ Ada kuota: 3/20 RPD
-  "gemini-2.0-flash-lite",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-pro",
+  "gemini-2.0-flash",        // ✅ Ada kuota: 8/Unlimited RPD
+  "gemini-2.0-flash-lite",   // ✅ Ada kuota: 9/Unlimited RPD
+  "gemini-2.5-flash",        // ✅ Ada kuota: 8/10K RPD
+  "gemini-3.5-flash",        // ✅ Ada kuota: 12/10K RPD
 ];
 
 interface GeminiError extends Error {
@@ -24,7 +22,6 @@ interface ErrorDetail {
   [key: string]: unknown;
 }
 
-// ─── Extract retry delay from error ────────────────────────────
 function getRetryDelay(err: GeminiError): number | null {
   if (!err.errorDetails || !Array.isArray(err.errorDetails)) {
     return null;
@@ -33,14 +30,13 @@ function getRetryDelay(err: GeminiError): number | null {
     if (detail.retryDelay) {
       const match = String(detail.retryDelay).match(/([\d.]+)s/);
       if (match) {
-        return parseFloat(match[1]) * 1000; // convert to ms
+        return parseFloat(match[1]) * 1000;
       }
     }
   }
   return null;
 }
 
-// ─── Generate with retry for a single model ────────────────────
 async function generateWithRetry(
   modelName: string,
   context: string,
@@ -57,7 +53,6 @@ async function generateWithRetry(
       const error = err as GeminiError;
       lastError = error;
 
-      // Retry only for 503 (Service Unavailable) or 429 (Rate Limit)
       if (error.status === 503 || error.status === 429) {
         const delay = getRetryDelay(error) || (Math.pow(2, attempt) * 1000 + Math.random() * 1000);
         console.warn(
@@ -67,7 +62,6 @@ async function generateWithRetry(
         continue;
       }
 
-      // For other errors (404, 400, etc.), don't retry
       console.warn(`Model ${modelName} failed with status ${error.status}:`, error.message);
       break;
     }
@@ -109,7 +103,6 @@ export async function POST(req: Request) {
     let result = null;
     let lastError: GeminiError | null = null;
 
-    // ─── Try each model in order ──────────────────────────────────
     for (const modelName of MODEL_NAMES) {
       try {
         console.log(`🔄 Trying model: ${modelName}...`);
@@ -120,26 +113,35 @@ export async function POST(req: Request) {
         const error = err as GeminiError;
         lastError = error;
         console.warn(`❌ Model ${modelName} failed:`, error.message);
-        
-        // If quota exceeded (429), skip to next model
+
         if (error.status === 429) {
           console.warn(`⚠️ Quota exceeded for ${modelName}, trying next model...`);
           continue;
         }
-        
-        // For 404 (model not found), skip to next model
+
         if (error.status === 404) {
           console.warn(`⚠️ Model ${modelName} not found, trying next model...`);
           continue;
         }
-        
-        // For other errors, we might want to retry the same model later,
-        // but for simplicity, continue to next model
       }
     }
 
     if (!result) {
       console.error("All models failed. Last error:", lastError);
+
+      // ─── Check if it's a billing/credit issue ──────────────────
+      const isBillingError = lastError?.message?.includes("prepayment credits are depleted") ||
+                             lastError?.message?.includes("billing");
+
+      if (isBillingError) {
+        return NextResponse.json(
+          {
+            reply: "Maaf, kredit prabayar AI telah habis. Sila tambah kredit atau tunggu sehingga esok untuk kuota percuma. 💳\n\n💡 Tips: Anda boleh dapatkan API key baru di https://aistudio.google.com/",
+            success: false,
+          },
+          { status: 429 }
+        );
+      }
 
       if (lastError?.status === 503) {
         return NextResponse.json(
@@ -170,7 +172,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // ─── Stream response ──────────────────────────────────────────
     const readableStream = new ReadableStream({
       async start(controller) {
         try {
