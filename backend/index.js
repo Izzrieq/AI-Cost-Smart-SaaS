@@ -14,6 +14,7 @@ app.use(express.json());
 const allowedOrigins = [
   "http://localhost:3000",
   "https://ai-cost-smart-saas-frontend.onrender.com",
+  "https://costsmart-backend-qn6c9.ondigitalocean.app/ai-cost-smart-saas-frontend",
 ];
 
 app.use(

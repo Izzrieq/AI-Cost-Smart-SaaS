@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname, // points to the frontend folder
   },
+  basePath: "/ai-cost-smart-saas-frontend",
 };
 
 export default nextConfig;
