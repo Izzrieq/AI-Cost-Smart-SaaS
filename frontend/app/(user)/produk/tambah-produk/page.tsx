@@ -979,9 +979,9 @@ export default function TambahProdukPage() {
                   onClick={() => setShowAdvanced(!showAdvanced)}
                 >
                   {showAdvanced ? (
-                    <>
-                      <ArrowDownIcon style={{ transform: 'rotate(180deg)' }} /> Sembunyikan
-                    </>
+                    <span style={{ transform: 'rotate(180deg)', display: 'inline-block' }} >
+                      <ArrowDownIcon />
+                    </span>
                   ) : (
                     <>
                       <ArrowRightIcon /> Kos Tambahan (Penghantaran, Pembungkusan)
