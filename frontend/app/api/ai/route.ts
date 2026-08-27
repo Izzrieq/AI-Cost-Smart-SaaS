@@ -3,12 +3,11 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// ─── Models with available free quota ──────────────────────────
 const MODEL_NAMES = [
-  "gemini-2.0-flash",        // ✅ Ada kuota: 8/Unlimited RPD
-  "gemini-2.0-flash-lite",   // ✅ Ada kuota: 9/Unlimited RPD
-  "gemini-2.5-flash",        // ✅ Ada kuota: 8/10K RPD
-  "gemini-3.5-flash",        // ✅ Ada kuota: 12/10K RPD
+  "gemini-2.0-flash",        
+  "gemini-2.0-flash-lite",   
+  "gemini-2.5-flash",        
+  "gemini-3.5-flash",        
 ];
 
 interface GeminiError extends Error {

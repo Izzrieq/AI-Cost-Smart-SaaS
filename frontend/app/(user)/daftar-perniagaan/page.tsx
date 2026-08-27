@@ -7,6 +7,7 @@ import { API_URL } from "@/lib/api";
 const businessTypes = [
   { value: "home", label: "Perniagaan Rumah", icon: "🏠", desc: "Beroperasi dari rumah" },
   { value: "stall", label: "Gerai / Kedai", icon: "🏪", desc: "Gerai atau kedai fizikal" },
+  { value: "dropship", label: "Dropship / Online", icon: "📦", desc: "Perniagaan atas talian" },
 ];
 
 // ─── ICONS ───────────────────────────────────────────────────────────────────

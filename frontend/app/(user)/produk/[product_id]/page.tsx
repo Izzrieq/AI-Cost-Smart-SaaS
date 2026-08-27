@@ -20,6 +20,7 @@ interface Cost {
   behavior: string;
   cost_per_unit: number;
   total_cost: number;
+  cost_category?: string;
 }
 
 interface Production {
@@ -37,7 +38,7 @@ interface Production {
   purchase_unit?: string;
 }
 
-type Tab = "bahan" | "tenaga" | "lain";
+type Tab = "bahan" | "tenaga" | "lain" | "supplier";
 
 const IconBack = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -147,7 +148,7 @@ const getMinQuantity = (unit: string): number => {
   return 1;
 };
 
-// ─── CVP CALCULATOR ──────────────────────────────────────────────────────────
+// ─── CVP CALCULATOR (Updated for Dropship) ──────────────────────────────────
 const calcCVP = (
   productions: Production[],
   costs: Cost[],
@@ -155,6 +156,7 @@ const calcCVP = (
   unitsProduced: number,
   sharedFixedCost: number = 0,
   salesMixPct: number = 100,
+  isDropship: boolean = false,
 ) => {
   const variableCosts = costs.filter(c => c.behavior === "variable");
   const fixedCosts = costs.filter(c => c.behavior === "fixed");
@@ -163,8 +165,18 @@ const calcCVP = (
   const allocatedFixedCost = sharedFixedCost * (salesMixPct / 100);
   const totalFixedCost = ownFixedCost + allocatedFixedCost;
 
-  const bahanTotal = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
-  const totalVariableCostOther = variableCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+  // ── For Dropship: "bahan" = supplier costs ──
+  let bahanTotal = 0;
+  if (isDropship) {
+    const supplierCosts = costs.filter(c => c.cost_category === "supplier" && c.behavior === "variable");
+    bahanTotal = supplierCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+  } else {
+    bahanTotal = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
+  }
+
+  const totalVariableCostOther = variableCosts
+    .filter(c => c.cost_category !== "supplier")
+    .reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
   const totalVariableCost = bahanTotal + totalVariableCostOther;
   const variableCostPerUnit = unitsProduced > 0 ? totalVariableCost / unitsProduced : 0;
 
@@ -204,6 +216,7 @@ const calcCVP = (
     safetyMarginPct,
     netProfitBatch,
     isProfitable: cmPerUnit > 0,
+    bahanTotal,
   };
 };
 
@@ -324,6 +337,19 @@ export default function ProductDetailPage() {
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3500);
   };
 
+  // ─── DROPSHIP STATE ──────────────────────────────────────────────────────────
+  const [isDropship, setIsDropship] = useState(false);
+  const [userBusinessType, setUserBusinessType] = useState<string>("");
+
+  // ─── Supplier Cost Form ──────────────────────────────────────────────────────
+  const [supplierCostForm, setSupplierCostForm] = useState({
+    name: "Kos Supplier",
+    behavior: "variable",
+    cost_per_unit: "",
+    total_cost: "",
+    units_produced: "",
+  });
+
   const [costForm, setCostForm] = useState({ name: "", behavior: "fixed", cost_per_unit: "", total_cost: "" });
   const [prodForm, setProdForm] = useState<ProdForm>(defaultProdForm());
   const [editProdForm, setEditProdForm] = useState({
@@ -342,6 +368,32 @@ export default function ProductDetailPage() {
 
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
+  // ─── FETCH BUSINESS TYPE ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const fetchBusinessType = async () => {
+      const token = localStorage.getItem("token");
+      try {
+        const res = await fetch(`${API_URL}/business`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const type = data.business?.type || "";
+          setUserBusinessType(type);
+          setIsDropship(type === "dropship");
+          if (type === "dropship") {
+            setTab("supplier");
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch business type:", err);
+      }
+    };
+
+    fetchBusinessType();
+  }, []);
+
+  // ─── FETCH PRODUCT DATA ─────────────────────────────────────────────────────
   useEffect(() => {
     const fetchAll = async () => {
       try {
@@ -396,15 +448,19 @@ export default function ProductDetailPage() {
   const sellingPrice = parseFloat(String(product?.selling_price ?? 0));
   const totalUnits = allProductsData.reduce((s, p) => s + p.units, 0);
   const salesMixPct = totalUnits > 0 ? (unitsProduced / totalUnits) * 100 : 100;
-  const cvp = calcCVP(productions, costs, sellingPrice, unitsProduced, sharedFixedCost, salesMixPct);
+  const cvp = calcCVP(productions, costs, sellingPrice, unitsProduced, sharedFixedCost, salesMixPct, isDropship);
 
-  const bahanTotal = productions.reduce((s, p) => s + parseFloat(String(p.total_cost ?? 0)), 0);
+  const bahanTotal = cvp.bahanTotal || 0;
   const tenagaTotal = costs.filter(c => c?.type === "tenaga").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
-  const lainTotal = costs.filter(c => c?.type === "indirect").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+  const lainTotal = costs.filter(c => c?.type === "indirect" && c.cost_category !== "supplier").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
+  const supplierTotal = costs.filter(c => c.cost_category === "supplier").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
 
-  const hasBahan = productions.length > 0;
+  const hasSupplierCost = costs.some(c => c.cost_category === "supplier");
+
+  const hasBahan = productions.length > 0 || (isDropship && hasSupplierCost);
   const hasTenaga = costs.filter(c => c?.type === "tenaga").length > 0;
-  const hasLain = costs.filter(c => c?.type === "indirect").length > 0;
+  const hasLain = costs.filter(c => c?.type === "indirect" && c.cost_category !== "supplier").length > 0;
+
   const completedSteps = [hasBahan, hasTenaga, hasLain].filter(Boolean).length;
   const marginMeta = getMarginMeta(cvp.netProfitMarginPct);
   const bepUnitsCeil = cvp.bepUnits === Infinity ? Infinity : Math.ceil(cvp.bepUnits);
@@ -481,6 +537,46 @@ export default function ProductDetailPage() {
     } catch { console.error("Add production error"); } finally { setAddingProd(false); }
   };
 
+  const handleAddSupplierCost = async () => {
+    if (!supplierCostForm.total_cost) {
+      showToast("Sila masukkan jumlah kos supplier.", "error");
+      return;
+    }
+    const totalCost = parseFloat(supplierCostForm.total_cost);
+    if (totalCost <= 0) {
+      showToast("Kos supplier mesti lebih daripada RM 0.", "error");
+      return;
+    }
+    const units = supplierCostForm.units_produced ? parseInt(supplierCostForm.units_produced) : unitsProduced;
+    if (!units || units <= 0) {
+      showToast("Sila masukkan bilangan unit dihasilkan.", "error");
+      return;
+    }
+
+    setAddingCost(true);
+    try {
+      const res = await fetch(`${API_URL}/products/${product_id}/costs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: supplierCostForm.name || "Kos Supplier",
+          type: "indirect",
+          behavior: "variable",
+          cost_per_unit: totalCost / units,
+          total_cost: totalCost,
+          cost_category: "supplier",
+        }),
+      });
+      const data = await res.json();
+      if (data.cost) {
+        setCosts(prev => [data.cost, ...prev]);
+        setSupplierCostForm({ name: "Kos Supplier", behavior: "variable", cost_per_unit: "", total_cost: "", units_produced: "" });
+        setShowAddCost(false);
+        showToast("Kos supplier berjaya ditambah!", "success");
+      }
+    } catch { console.error("Add supplier cost error"); } finally { setAddingCost(false); }
+  };
+
   const handleAddCost = async (type: string) => {
     if (!costForm.name || !costForm.cost_per_unit || !costForm.total_cost) return;
     setAddingCost(true);
@@ -493,7 +589,8 @@ export default function ProductDetailPage() {
           type,
           behavior: costForm.behavior,
           cost_per_unit: parseFloat(costForm.cost_per_unit),
-          total_cost: parseFloat(costForm.total_cost)
+          total_cost: parseFloat(costForm.total_cost),
+          cost_category: "standard",
         }),
       });
       const data = await res.json();
@@ -576,7 +673,6 @@ export default function ProductDetailPage() {
     }
   };
 
-  // ── EDIT / DELETE PRODUCTION ──────────────────────────────────────────────
   const openEditProduction = (p: Production) => {
     let purchasePrice = p.purchase_price;
     let purchaseQty = p.purchase_qty;
@@ -668,7 +764,6 @@ export default function ProductDetailPage() {
     } catch { console.error("Delete production error"); } finally { setDeletingItem(false); }
   };
 
-  // ── EDIT / DELETE COST ────────────────────────────────────────────────────
   const openEditCost = (c: Cost) => {
     setSelectedCost(c);
     setEditCostForm({
@@ -712,17 +807,25 @@ export default function ProductDetailPage() {
   };
 
   const filteredProductions = productions.filter(Boolean).filter(p => (p.name ?? "").toLowerCase().includes(search.toLowerCase()));
-  const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: "bahan", label: "Bahan", icon: <IconBox /> },
-    { key: "tenaga", label: "Tenaga Kerja", icon: <IconUser /> },
-    { key: "lain", label: "Lain-Lain", icon: <IconZap /> },
-  ];
+  const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = isDropship
+    ? [
+        { key: "supplier", label: "Supplier", icon: <IconBox /> },
+        { key: "tenaga", label: "Tenaga Kerja", icon: <IconUser /> },
+        { key: "lain", label: "Lain-Lain", icon: <IconZap /> },
+      ]
+    : [
+        { key: "bahan", label: "Bahan", icon: <IconBox /> },
+        { key: "tenaga", label: "Tenaga Kerja", icon: <IconUser /> },
+        { key: "lain", label: "Lain-Lain", icon: <IconZap /> },
+      ];
+
   const tabTooltips: Record<Tab, string> = {
     bahan: "Masukkan semua bahan mentah untuk 1 batch pengeluaran.",
     tenaga: "Kos upah pekerja untuk 1 batch. Bukan gaji bulanan.",
     lain: "Kos overhead seperti gas, elektrik, pembungkusan per batch.",
+    supplier: "Masukkan kos belian dari supplier untuk 1 batch.",
   };
-  const tabCostType: Record<Tab, string> = { bahan: "", tenaga: "tenaga", lain: "indirect" };
+  const tabCostType: Record<Tab, string> = { bahan: "", tenaga: "tenaga", lain: "indirect", supplier: "" };
 
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "#f5f7fa", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, fontFamily: "sans-serif" }}>
@@ -786,7 +889,7 @@ export default function ProductDetailPage() {
         .pd-item-card:hover { transform:translateY(-2px); box-shadow:0 5px 18px rgba(0,0,0,0.07); }
         .pd-item-top { display:flex; align-items:center; gap:12px; }
         .pd-item-icon { width:40px; height:40px; border-radius:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-        .pd-item-icon.bahan { background:#f0f9ff; } .pd-item-icon.tenaga { background:#f5f3ff; } .pd-item-icon.lain { background:#fffbeb; }
+        .pd-item-icon.bahan { background:#f0f9ff; } .pd-item-icon.tenaga { background:#f5f3ff; } .pd-item-icon.lain { background:#fffbeb; } .pd-item-icon.supplier { background:#f0fdf4; }
         .pd-item-name { font-size:13px; font-weight:700; color:#1e293b; }
         .pd-item-sub { font-size:11px; color:#94a3b8; margin-top:2px; font-weight:500; }
         .pd-item-amount { font-size:14px; font-weight:800; color:#1e293b; }
@@ -937,12 +1040,18 @@ export default function ProductDetailPage() {
                     <span style={{ color: "rgba(255,255,255,0.65)", fontSize: 11, fontWeight: 600 }}>CM {cvp.cmRatio.toFixed(1)}%</span>
                   </div>
                 )}
+                {isDropship && (
+                  <div className="pd-cm-pill" style={{ background: "rgba(255,255,255,0.12)" }}>
+                    <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: 600 }}>📦 Dropship</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
 
         <div className="pd-body">
+          {/* TABS */}
           <div className="pd-card" style={{ padding: 6 }}>
             <div className="pd-tabs">
               {tabs.map(t => (
@@ -953,6 +1062,7 @@ export default function ProductDetailPage() {
             </div>
           </div>
 
+          {/* PROGRESS */}
           <div className="pd-card">
             <div className="pd-progress-header">
               <span className="pd-progress-label">Kelengkapan Kos</span>
@@ -961,20 +1071,36 @@ export default function ProductDetailPage() {
             <div className="pd-progress-track">
               <div className="pd-progress-fill" style={{ width: `${(completedSteps / 3) * 100}%` }} />
             </div>
-            {[
-              { label: "Bahan ditambah", done: hasBahan },
-              { label: "Tenaga kerja diisi", done: hasTenaga },
-              { label: "Perbelanjaan lain diisi", done: hasLain },
-            ].map(item => (
-              <div className="pd-step-row" key={item.label}>
-                <div className={`pd-step-dot ${item.done ? "done" : "pending"}`}>
-                  {item.done ? <IconCheck /> : <div className="pd-step-dot-inner" />}
+            {isDropship ? (
+              [
+                { label: "Kos Supplier ditambah", done: hasBahan },
+                { label: "Tenaga kerja diisi", done: hasTenaga },
+                { label: "Perbelanjaan lain diisi", done: hasLain },
+              ].map(item => (
+                <div className="pd-step-row" key={item.label}>
+                  <div className={`pd-step-dot ${item.done ? "done" : "pending"}`}>
+                    {item.done ? <IconCheck /> : <div className="pd-step-dot-inner" />}
+                  </div>
+                  <span className={`pd-step-label ${item.done ? "done" : "pending"}`}>{item.label}</span>
                 </div>
-                <span className={`pd-step-label ${item.done ? "done" : "pending"}`}>{item.label}</span>
-              </div>
-            ))}
+              ))
+            ) : (
+              [
+                { label: "Bahan ditambah", done: hasBahan },
+                { label: "Tenaga kerja diisi", done: hasTenaga },
+                { label: "Perbelanjaan lain diisi", done: hasLain },
+              ].map(item => (
+                <div className="pd-step-row" key={item.label}>
+                  <div className={`pd-step-dot ${item.done ? "done" : "pending"}`}>
+                    {item.done ? <IconCheck /> : <div className="pd-step-dot-inner" />}
+                  </div>
+                  <span className={`pd-step-label ${item.done ? "done" : "pending"}`}>{item.label}</span>
+                </div>
+              ))
+            )}
           </div>
 
+          {/* TOOLTIP */}
           <div className="pd-tooltip">
             <div className="pd-tooltip-icon"><IconInfo /></div>
             <p>{tabTooltips[tab]}</p>
@@ -990,7 +1116,8 @@ export default function ProductDetailPage() {
             </div>
           )}
 
-          {tab === "bahan" && (
+          {/* ─── TAB: BAHAN (Not for Dropship) ─── */}
+          {tab === "bahan" && !isDropship && (
             <>
               <div className="pd-action-row">
                 <div className="pd-search-box">
@@ -1041,20 +1168,72 @@ export default function ProductDetailPage() {
             </>
           )}
 
+          {/* ─── TAB: SUPPLIER (Dropship Only) ─── */}
+          {tab === "supplier" && isDropship && (
+            <>
+              <div className="pd-card" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 24 }}>📦</span>
+                  <div>
+                    <div style={{ fontWeight: 700, color: "#15803d", fontSize: 14 }}>Mod Dropship</div>
+                    <div style={{ fontSize: 12, color: "#16a34a" }}>
+                      Anda tidak perlu masukkan bahan mentah. Masukkan kos belian dari supplier sahaja.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {costs.filter(c => c.cost_category === "supplier").length > 0 ? (
+                costs.filter(c => c.cost_category === "supplier").map((c, idx) => (
+                  <div key={c.costs_id} className="pd-item-card" style={{ animationDelay: `${0.05 + idx * 0.04}s` }} onClick={() => openEditCost(c)}>
+                    <div className="pd-item-top">
+                      <div className="pd-item-icon supplier"><IconBox /></div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="pd-item-name">{c.name}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                          <span className={`pd-behavior-badge ${c.behavior}`}>{c.behavior === "fixed" ? "Tetap" : "Berubah"}</span>
+                          <span className="pd-behavior-badge" style={{ background: "#dcfce7", color: "#16a34a" }}>Supplier</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div className="pd-item-amount">RM {parseFloat(String(c.total_cost)).toFixed(2)}</div>
+                        <div className="pd-item-amount-sub">RM {parseFloat(String(c.cost_per_unit)).toFixed(4)}/unit</div>
+                      </div>
+                      <div className="pd-item-arrow"><IconArrowRight /></div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="pd-empty" onClick={() => setShowAddCost(true)}>
+                  <div className="pd-empty-icon"><IconBox /></div>
+                  <div className="pd-empty-title">Tiada kos supplier</div>
+                  <div className="pd-empty-desc">Masukkan kos belian dari supplier untuk produk ini.</div>
+                  <button className="pd-empty-cta" onClick={e => { e.stopPropagation(); setShowAddCost(true); }}>+ Tambah Kos Supplier</button>
+                </div>
+              )}
+
+              <button className="pd-add-full-btn" onClick={() => setShowAddCost(true)}>
+                <IconPlus size={16} color="#fff" />
+                Tambah Kos Supplier
+              </button>
+            </>
+          )}
+
+          {/* ─── TAB: TENAGA / LAIN ─── */}
           {(tab === "tenaga" || tab === "lain") && (
             <>
               <button className="pd-add-full-btn" onClick={() => setShowAddCost(true)}>
                 <IconPlus size={16} color="#fff" />
                 {tab === "tenaga" ? "Tambah Tenaga Kerja" : "Tambah Overhead / Lain-lain"}
               </button>
-              {costs.filter(c => c?.type === tabCostType[tab]).length === 0 ? (
+              {costs.filter(c => c?.type === tabCostType[tab] && c.cost_category !== "supplier").length === 0 ? (
                 <div className="pd-empty">
                   <div className="pd-empty-icon">{tab === "tenaga" ? <IconUser /> : <IconZap />}</div>
                   <div className="pd-empty-title">{tab === "tenaga" ? "Tiada rekod tenaga kerja" : "Tiada rekod utiliti"}</div>
                   <div className="pd-empty-desc">{tab === "tenaga" ? "Tambah kos upah per batch." : "Tambah kos overhead per batch."}</div>
                 </div>
               ) : (
-                costs.filter(c => c?.type === tabCostType[tab]).map((c, idx) => (
+                costs.filter(c => c?.type === tabCostType[tab] && c.cost_category !== "supplier").map((c, idx) => (
                   <div key={c.costs_id} className="pd-item-card" style={{ animationDelay: `${0.05 + idx * 0.04}s` }} onClick={() => openEditCost(c)}>
                     <div className="pd-item-top">
                       <div className={`pd-item-icon ${tab}`}>{tab === "tenaga" ? <IconUser /> : <IconZap />}</div>
@@ -1076,14 +1255,17 @@ export default function ProductDetailPage() {
             </>
           )}
 
+          {/* ─── CVP ANALYSIS ─── */}
           <div className="pd-cvp">
             <div className="pd-cvp-header">
-              <div className="pd-cvp-title">📊 Analisis CVP</div>
+              <div className="pd-cvp-title">📊 Analisis CVP {isDropship && "(Dropship)"}</div>
               <div className="pd-cvp-sub">Berdasarkan {unitsProduced} unit dihasilkan · Harga jual RM {sellingPrice.toFixed(2)}/unit</div>
             </div>
             {cvp.totalBatchCost === 0 ? (
               <div style={{ textAlign: "center", padding: "20px 0", color: "#94a3b8", fontSize: 12 }}>
-                Tambah bahan, tenaga kerja dan lain-lain dahulu untuk lihat pengiraan CVP.
+                {isDropship
+                  ? "Tambah kos supplier, tenaga kerja dan lain-lain dahulu untuk lihat pengiraan CVP."
+                  : "Tambah bahan, tenaga kerja dan lain-lain dahulu untuk lihat pengiraan CVP."}
               </div>
             ) : (
               <>
@@ -1106,7 +1288,7 @@ export default function ProductDetailPage() {
                   <div className="pd-kpi blue">
                     <div className="pd-kpi-label">Kos Berubah/Unit</div>
                     <div className="pd-kpi-val">RM {cvp.variableCostPerUnit.toFixed(2)}</div>
-                    <div className="pd-kpi-sub">bahan + kos berubah</div>
+                    <div className="pd-kpi-sub">{isDropship ? "supplier + kos berubah" : "bahan + kos berubah"}</div>
                   </div>
                   <div className={`pd-kpi ${cvp.cmPerUnit >= 0 ? "green" : "red"}`}>
                     <div className="pd-kpi-label">CM / Unit</div>
@@ -1195,9 +1377,13 @@ export default function ProductDetailPage() {
             )}
           </div>
 
+          {/* ─── RINGKASAN KOS ─── */}
           <div className="pd-ringkasan">
             <div className="pd-ringkasan-title">Ringkasan Kos Batch</div>
-            <div className="pd-cost-row"><span className="pd-cost-row-label">🥄 Bahan Mentah</span><span className="pd-cost-row-val">RM {bahanTotal.toFixed(2)}</span></div>
+            <div className="pd-cost-row">
+              <span className="pd-cost-row-label">{isDropship ? "🥄 Kos Supplier" : "🥄 Bahan Mentah"}</span>
+              <span className="pd-cost-row-val">RM {bahanTotal.toFixed(2)}</span>
+            </div>
             <div className="pd-cost-row"><span className="pd-cost-row-label">👷 Tenaga Kerja</span><span className="pd-cost-row-val">RM {tenagaTotal.toFixed(2)}</span></div>
             <div className="pd-cost-row"><span className="pd-cost-row-label">⚡ Overhead / Lain-Lain</span><span className="pd-cost-row-val">RM {lainTotal.toFixed(2)}</span></div>
             <div className="pd-cost-divider" />
@@ -1219,7 +1405,7 @@ export default function ProductDetailPage() {
           </div>
         </div>
 
-        {/* EDIT PRICE MODAL */}
+        {/* ─── EDIT PRICE MODAL ─── */}
         {showEditPriceModal && (
           <div className="pd-modal-backdrop" onClick={() => setShowEditPriceModal(false)}>
             <div className="pd-modal-sheet" onClick={e => e.stopPropagation()}>
@@ -1244,8 +1430,8 @@ export default function ProductDetailPage() {
           </div>
         )}
 
-        {/* ADD PRODUCTION MODAL */}
-        {showAddProduction && (
+        {/* ─── ADD PRODUCTION MODAL (Not for Dropship) ─── */}
+        {showAddProduction && !isDropship && (
           <div className="pd-modal-backdrop" onClick={() => setShowAddProduction(false)}>
             <div className="pd-modal-sheet" onClick={e => e.stopPropagation()}>
               <div className="pd-modal-handle" />
@@ -1399,54 +1585,171 @@ export default function ProductDetailPage() {
           </div>
         )}
 
-        {/* ADD COST MODAL */}
+        {/* ─── ADD COST MODAL (For Supplier, Tenaga, Lain) ─── */}
         {showAddCost && (
           <div className="pd-modal-backdrop" onClick={() => setShowAddCost(false)}>
             <div className="pd-modal-sheet" onClick={e => e.stopPropagation()}>
               <div className="pd-modal-handle" />
               <div className="pd-modal-title-row">
-                <span className="pd-modal-title">{tab === "tenaga" ? "Tambah Tenaga Kerja" : "Tambah Kos"}</span>
+                <span className="pd-modal-title">
+                  {tab === "supplier" ? "Tambah Kos Supplier" :
+                   tab === "tenaga" ? "Tambah Tenaga Kerja" :
+                   "Tambah Utiliti / Overhead"}
+                </span>
                 <button className="pd-modal-close" onClick={() => setShowAddCost(false)}><IconClose /></button>
               </div>
-              <div className="pd-field">
-                <label className="pd-field-label">{tab === "tenaga" ? "Nama Pekerja / Peranan" : "Nama Utiliti"}</label>
-                <input type="text" placeholder={tab === "tenaga" ? "cth: Upah Baker" : "cth: Elektrik, Gas"} value={costForm.name} onChange={e => setCostForm({ ...costForm, name: e.target.value })} />
-              </div>
-              <div className="pd-field">
-                <label className="pd-field-label">Jenis Kos</label>
-                <div className="pd-pill-group">
-                  {["fixed", "variable"].map(b => (
-                    <button key={b} className={`pd-pill ${costForm.behavior === b ? "active" : ""}`} onClick={() => setCostForm({ ...costForm, behavior: b })}>
-                      {b === "fixed" ? "Tetap (Fixed)" : "Berubah (Variable)"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "10px 12px", marginBottom: 10, fontSize: 11, color: "#1d4ed8", lineHeight: 1.6 }}>
-                {tab === "tenaga"
-                  ? <><strong>Tetap</strong>: RM50 upah baker untuk 1 batch. <strong>Berubah</strong>: RM8/jam × bilangan jam.</>
-                  : <><strong>Tetap</strong>: Sewa RM5/batch. <strong>Berubah</strong>: Gas RM2 setiap kali masak.</>}
-              </div>
-              <div className="pd-modal-grid">
-                <div className="pd-field">
-                  <label className="pd-field-label">Kos/Unit (RM)</label>
-                  <input type="number" placeholder="0.00" value={costForm.cost_per_unit}
-                    onChange={e => { const cpu = e.target.value; setCostForm({ ...costForm, cost_per_unit: cpu, total_cost: cpu }); }} />
-                </div>
-                <div className="pd-field">
-                  <label className="pd-field-label">Jumlah Kos (RM)</label>
-                  <input type="number" placeholder="0.00" value={costForm.total_cost}
-                    onChange={e => setCostForm({ ...costForm, total_cost: e.target.value })} />
-                </div>
-              </div>
-              <button className="pd-save-btn" onClick={() => handleAddCost(tab === "tenaga" ? "tenaga" : "indirect")} disabled={addingCost}>
-                {addingCost ? <span className="pd-spinner" /> : "Simpan"}
-              </button>
+
+              {tab === "supplier" && isDropship ? (
+                // ─── SUPPLIER COST FORM ───
+                <>
+                  <div className="pd-field">
+                    <label className="pd-field-label">Nama Kos Supplier</label>
+                    <input type="text" placeholder="cth: Kos Belian dari Supplier" value={supplierCostForm.name}
+                      onChange={e => setSupplierCostForm({ ...supplierCostForm, name: e.target.value })} />
+                  </div>
+                  <div className="pd-field">
+                    <label className="pd-field-label">Jenis Kos</label>
+                    <div className="pd-pill-group">
+                      {["variable"].map(b => (
+                        <button key={b} className={`pd-pill active`} disabled>
+                          Berubah (Variable)
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="pd-field">
+                    <label className="pd-field-label">⭐ Bilangan Unit Dihasilkan (per batch)</label>
+                    <input type="number" placeholder="cth: 10" value={supplierCostForm.units_produced}
+                      onChange={e => {
+                        const units = e.target.value;
+                        setSupplierCostForm({ ...supplierCostForm, units_produced: units });
+                        const costPerUnit = parseFloat(supplierCostForm.cost_per_unit) || 0;
+                        if (costPerUnit > 0 && parseFloat(units) > 0) {
+                          setSupplierCostForm(prev => ({
+                            ...prev,
+                            total_cost: (costPerUnit * parseFloat(units)).toFixed(2)
+                          }));
+                        }
+                      }} />
+                    <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>* Kos supplier untuk 1 batch pengeluaran.</div>
+                  </div>
+                  <div className="pd-modal-grid">
+                    <div className="pd-field">
+                      <label className="pd-field-label">Kos/Unit (RM)</label>
+                      <input type="number" placeholder="0.00" value={supplierCostForm.cost_per_unit}
+                        onChange={e => {
+                          const cpu = e.target.value;
+                          const units = parseFloat(supplierCostForm.units_produced) || unitsProduced;
+                          setSupplierCostForm({ 
+                            ...supplierCostForm, 
+                            cost_per_unit: cpu,
+                            total_cost: cpu && units ? (parseFloat(cpu) * units).toFixed(2) : ""
+                          });
+                        }} />
+                    </div>
+                    <div className="pd-field">
+                      <label className="pd-field-label">Jumlah Kos (RM)</label>
+                      <input type="number" placeholder="0.00" value={supplierCostForm.total_cost}
+                        onChange={e => {
+                          const total = e.target.value;
+                          const units = parseFloat(supplierCostForm.units_produced) || unitsProduced;
+                          setSupplierCostForm({ 
+                            ...supplierCostForm, 
+                            total_cost: total,
+                            cost_per_unit: total && units ? (parseFloat(total) / units).toFixed(4) : ""
+                          });
+                        }} />
+                    </div>
+                  </div>
+                  <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "10px 12px", marginBottom: 10, fontSize: 11, color: "#1d4ed8", lineHeight: 1.6 }}>
+                    💡 Kos supplier akan dikira sebagai <strong>kos berubah</strong>. Sistem akan gunakan ini sebagai "bahan" untuk pengiraan margin dropship.
+                  </div>
+                  <button className="pd-save-btn" onClick={handleAddSupplierCost} disabled={addingCost}>
+                    {addingCost ? <span className="pd-spinner" /> : "Simpan Kos Supplier"}
+                  </button>
+                </>
+              ) : tab === "tenaga" ? (
+                // ─── TENAGA KERJA ───
+                <>
+                  <div className="pd-field">
+                    <label className="pd-field-label">Nama Pekerja / Peranan</label>
+                    <input type="text" placeholder="cth: Upah Baker" value={costForm.name} onChange={e => setCostForm({ ...costForm, name: e.target.value })} />
+                  </div>
+                  <div className="pd-field">
+                    <label className="pd-field-label">Jenis Kos</label>
+                    <div className="pd-pill-group">
+                      {["fixed", "variable"].map(b => (
+                        <button key={b} className={`pd-pill ${costForm.behavior === b ? "active" : ""}`} onClick={() => setCostForm({ ...costForm, behavior: b })}>
+                          {b === "fixed" ? "Tetap (Fixed)" : "Berubah (Variable)"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "10px 12px", marginBottom: 10, fontSize: 11, color: "#1d4ed8", lineHeight: 1.6 }}>
+                    <strong>Tetap</strong>: RM50 upah baker untuk 1 batch. <strong>Berubah</strong>: RM8/jam × bilangan jam.
+                  </div>
+                  <div className="pd-modal-grid">
+                    <div className="pd-field">
+                      <label className="pd-field-label">Kos/Unit (RM)</label>
+                      <input type="number" placeholder="0.00" value={costForm.cost_per_unit}
+                        onChange={e => { const cpu = e.target.value; setCostForm({ ...costForm, cost_per_unit: cpu, total_cost: cpu }); }} />
+                    </div>
+                    <div className="pd-field">
+                      <label className="pd-field-label">Jumlah Kos (RM)</label>
+                      <input type="number" placeholder="0.00" value={costForm.total_cost}
+                        onChange={e => setCostForm({ ...costForm, total_cost: e.target.value })} />
+                    </div>
+                  </div>
+                  <button className="pd-save-btn" onClick={() => handleAddCost("tenaga")} disabled={addingCost}>
+                    {addingCost ? <span className="pd-spinner" /> : "Simpan"}
+                  </button>
+                </>
+              ) : (
+                // ─── LAIN-LAIN (Overhead) ───
+                <>
+                  <div className="pd-field">
+                    <label className="pd-field-label">Nama Utiliti / Overhead</label>
+                    <input type="text" placeholder="cth: Elektrik, Gas" value={costForm.name} onChange={e => setCostForm({ ...costForm, name: e.target.value })} />
+                  </div>
+                  <div className="pd-field">
+                    <label className="pd-field-label">Jenis Kos</label>
+                    <div className="pd-pill-group">
+                      {["fixed", "variable"].map(b => (
+                        <button key={b} className={`pd-pill ${costForm.behavior === b ? "active" : ""}`} onClick={() => setCostForm({ ...costForm, behavior: b })}>
+                          {b === "fixed" ? "Tetap (Fixed)" : "Berubah (Variable)"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "10px 12px", marginBottom: 10, fontSize: 11, color: "#1d4ed8", lineHeight: 1.6 }}>
+                    {isDropship ? (
+                      <><strong>Tetap</strong>: Kos tetap bulanan seperti sewa laman web. <strong>Berubah</strong>: Kos iklan, komisen platform.</>
+                    ) : (
+                      <><strong>Tetap</strong>: Sewa RM5/batch. <strong>Berubah</strong>: Gas RM2 setiap kali masak.</>
+                    )}
+                  </div>
+                  <div className="pd-modal-grid">
+                    <div className="pd-field">
+                      <label className="pd-field-label">Kos/Unit (RM)</label>
+                      <input type="number" placeholder="0.00" value={costForm.cost_per_unit}
+                        onChange={e => { const cpu = e.target.value; setCostForm({ ...costForm, cost_per_unit: cpu, total_cost: cpu }); }} />
+                    </div>
+                    <div className="pd-field">
+                      <label className="pd-field-label">Jumlah Kos (RM)</label>
+                      <input type="number" placeholder="0.00" value={costForm.total_cost}
+                        onChange={e => setCostForm({ ...costForm, total_cost: e.target.value })} />
+                    </div>
+                  </div>
+                  <button className="pd-save-btn" onClick={() => handleAddCost("indirect")} disabled={addingCost}>
+                    {addingCost ? <span className="pd-spinner" /> : "Simpan"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
 
-        {/* EDIT PRODUCTION MODAL */}
+        {/* ─── EDIT PRODUCTION MODAL ─── */}
         {selectedProduction && (
           <div className="pd-modal-backdrop" onClick={() => setSelectedProduction(null)}>
             <div className="pd-modal-sheet" onClick={e => e.stopPropagation()}>
@@ -1587,17 +1890,20 @@ export default function ProductDetailPage() {
           </div>
         )}
 
-        {/* EDIT COST MODAL */}
+        {/* ─── EDIT COST MODAL ─── */}
         {selectedCost && (
           <div className="pd-modal-backdrop" onClick={() => setSelectedCost(null)}>
             <div className="pd-modal-sheet" onClick={e => e.stopPropagation()}>
               <div className="pd-modal-handle" />
               <div className="pd-modal-title-row">
-                <span className="pd-modal-title">{selectedCost.type === "tenaga" ? "Edit Tenaga Kerja" : "Edit Utiliti"}</span>
+                <span className="pd-modal-title">
+                  {selectedCost.cost_category === "supplier" ? "Edit Kos Supplier" :
+                   selectedCost.type === "tenaga" ? "Edit Tenaga Kerja" : "Edit Utiliti"}
+                </span>
                 <button className="pd-modal-close" onClick={() => setSelectedCost(null)}><IconClose /></button>
               </div>
               <div className="pd-field">
-                <label className="pd-field-label">{selectedCost.type === "tenaga" ? "Nama Pekerja / Peranan" : "Nama Utiliti"}</label>
+                <label className="pd-field-label">Nama</label>
                 <input type="text" value={editCostForm.name} onChange={e => setEditCostForm({ ...editCostForm, name: e.target.value })} />
               </div>
               <div className="pd-field">

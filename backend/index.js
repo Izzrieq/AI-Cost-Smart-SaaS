@@ -690,7 +690,7 @@ app.post("/business", authenticateToken, async (req, res) => {
         .status(400)
         .json({ message: "Sila lengkapkan semua maklumat." });
 
-    if (!["home", "stall"].includes(type))
+    if (!["home", "stall", "dropship"].includes(type))
       return res.status(400).json({ message: "Jenis perniagaan tidak sah." });
 
     const existing = await pool.query(
@@ -750,7 +750,7 @@ app.put("/business", authenticateToken, async (req, res) => {
       idx++;
     }
     if (type) {
-      if (!["home", "stall"].includes(type)) {
+      if (!["home", "stall", "dropship"].includes(type)) {
         return res.status(400).json({ message: "Jenis perniagaan tidak sah." });
       }
       query += `type = $${idx}, `;
