@@ -1,6 +1,7 @@
 // components/produk/regular/RegularProductDetail.tsx
 "use client";
 
+import React from "react"; // ← ADD THIS
 import { useProductDetail } from "@/hooks/useProductDetail";
 import {
   IconBox,
@@ -10,7 +11,7 @@ import {
   IconSearch,
   IconArrowRight,
   IconInfo,
-} from "@/components/products/Icons"; // ← fixed import path
+} from "@/components/products/Icons";
 import ProductHeader from "../shared/ProductHeader";
 import ProgressCard from "../shared/ProgressCard";
 import CVPAnalysis from "../shared/CVPAnalysis";
@@ -23,15 +24,12 @@ import AddProductionModal from "../shared/modals/AddProductionModal";
 import EditProductionModal from "../shared/modals/EditProductionModal";
 import "@/app/(user)/produk/[product_id]/product-detail.css";
 
-// ─── IMPORT HELPERS FROM HOOK ──────────────────────────────────────
-// These are exported from useProductDetail.ts
 import {
   getBaseUnitDisplay,
   formatQuantityDisplay,
   getStep,
 } from "@/hooks/useProductDetail";
 
-// ─── LOADING SPINNER ─────────────────────────────────────────────
 function LoadingSpinner() {
   return (
     <div
@@ -83,7 +81,7 @@ export default function RegularProductDetail() {
     tempPrice,
     updatingPrice,
     toast,
-    setToast, // ← added
+    setToast,
     isDropship,
     supplierCostForm,
     costForm,
@@ -115,9 +113,9 @@ export default function RegularProductDetail() {
     setEditProdForm,
     setEditCostForm,
     setTempPrice,
-    setShowEditPriceModal, // ← added
-    setSelectedProduction, // ← added
-    setSelectedCost, // ← added
+    setShowEditPriceModal,
+    setSelectedProduction,
+    setSelectedCost,
     showToast,
     openEditPriceModal,
     handleUpdatePrice,
@@ -138,8 +136,8 @@ export default function RegularProductDetail() {
 
   if (loading) return <LoadingSpinner />;
 
-  // Define tabs with proper type union (matches Tab type from hook)
-  const tabs: { key: "bahan" | "tenaga" | "lain"; label: string; icon: JSX.Element }[] = [
+  // ✅ Use React.ReactElement instead of JSX.Element
+  const tabs: { key: "bahan" | "tenaga" | "lain"; label: string; icon: React.ReactElement }[] = [
     { key: "bahan", label: "Bahan", icon: <IconBox /> },
     { key: "tenaga", label: "Tenaga Kerja", icon: <IconUser /> },
     { key: "lain", label: "Lain-Lain", icon: <IconZap /> },

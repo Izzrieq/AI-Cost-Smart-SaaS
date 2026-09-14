@@ -401,20 +401,6 @@ export function useProductDetail() {
   const salesMixPct = totalUnits > 0 ? (unitsProduced / totalUnits) * 100 : 100;
   const cvp = calcCVP(productions, costs, sellingPrice, unitsProduced, sharedFixedCost, salesMixPct, isDropship);
 
-  // ─── DEBUG LOGS ──────────────────────────────────────────────────────
-  console.log("=== CVP DEBUG ===");
-  console.log("isDropship:", isDropship);
-  console.log("unitsProduced:", unitsProduced);
-  console.log("costs:", costs);
-  console.log("supplierCosts:", costs.filter(c => c.cost_category === "supplier" && c.behavior === "variable"));
-  console.log("other variable costs:", costs.filter(c => c.behavior === "variable" && c.cost_category !== "supplier"));
-  console.log("bahanTotal:", cvp.bahanTotal);
-  console.log("totalVariableCost:", cvp.totalVariableCost);
-  console.log("totalFixedCost:", cvp.totalFixedCost);
-  console.log("totalBatchCost:", cvp.totalBatchCost);
-  console.log("costPerUnitTotal:", cvp.costPerUnitTotal);
-  console.log("netProfitMarginPct:", cvp.netProfitMarginPct);
-
   const bahanTotal = cvp.bahanTotal || 0;
   const tenagaTotal = costs.filter(c => c?.type === "tenaga").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
   const lainTotal = costs.filter(c => c?.type === "indirect" && c.cost_category !== "supplier").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
@@ -901,6 +887,7 @@ export function useProductDetail() {
     setTempPrice,
     setToast,
     setShowEditPriceModal,
+    setSelectedProduction, 
     setSelectedCost,
     setBatchSize: handleSetBatchSize,
     // Handlers
