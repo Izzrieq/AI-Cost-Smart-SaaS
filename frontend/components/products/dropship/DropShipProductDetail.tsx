@@ -115,7 +115,7 @@ export default function DropshipProductDetail() {
 
   if (loading) return <LoadingSpinner />;
 
-  const tabs: { key: "supplier" | "tenaga" | "lain"; label: string; icon: JSX.Element }[] = [
+  const tabs: { key: "supplier" | "tenaga" | "lain"; label: string; icon: React.ReactElement }[] = [
     { key: "supplier", label: "Supplier", icon: <IconBox /> },
     { key: "tenaga", label: "Tenaga Kerja", icon: <IconUser /> },
     { key: "lain", label: "Lain-Lain", icon: <IconZap /> },
