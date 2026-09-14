@@ -288,19 +288,29 @@ export default function SettingPage() {
   }, [user.role, fetchInviteLink, fetchStaffList]);
 
   // ─── HANDLERS ─────────────────────────────────────────────────────────────
+
+  const clearAppStorage = () => {
+    const keys = Object.keys(localStorage);
+    keys.forEach((key) => {
+      if (key.startsWith('app_') || key === 'token' || key === 'user') {
+        localStorage.removeItem(key);
+      }
+    });
+    sessionStorage.clear();
+  };
+
   const handleLogout = async () => {
     setLoading(true);
+    setShowLogoutModal(false);  
     try {
       await signOut(auth);
-      localStorage.removeItem("token");
+      clearAppStorage();
       router.push("/login");
     } catch (err) {
       console.error(err);
-      showToast("Ralat semasa log keluar.", "error");
-    } finally {
+      showToast("Gagal log keluar, Sila cuba lagi.", "error");
       setLoading(false);
-      setShowLogoutModal(false);
-    }
+    } 
   };
 
   const openEditModal = (type: "user" | "business") => {

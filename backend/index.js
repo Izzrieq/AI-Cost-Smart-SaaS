@@ -11,11 +11,10 @@ const PORT = process.env.PORT || 8080;
 const app = express();
 
 app.use(express.json());
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://ai-cost-smart-saas-frontend.onrender.com",
-  "https://costsmart-frontend-qaxct.ondigitalocean.app",
-];
+
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",").map((origin) => origin.trim())
+  : [];
 
 app.use(
   cors({
@@ -144,6 +143,7 @@ const generateId = async (table, idColumn, prefix) => {
 
 const recalcMargin = async (product_id) => {
   try {
+    // Get selling price
     const prodRes = await pool.query(
       "SELECT selling_price FROM products WHERE product_id = $1",
       [product_id],
@@ -152,48 +152,43 @@ const recalcMargin = async (product_id) => {
     const sellingPrice = parseFloat(prodRes.rows[0].selling_price);
     if (sellingPrice <= 0) return;
 
-    const unitsRes = await pool.query(
-      `SELECT COALESCE(MAX(units_produced), 0) AS units_produced
-       FROM productions
-       WHERE product_id = $1 AND units_produced > 0`,
-      [product_id],
-    );
-    const unitsProduced = parseInt(unitsRes.rows[0].units_produced) || 0;
-    if (unitsProduced <= 0) {
-      await pool.query(
-        "UPDATE products SET margin_percentage = 0 WHERE product_id = $1",
-        [product_id],
-      );
-      return;
-    }
-
-    const bahanRes = await pool.query(
-      "SELECT COALESCE(SUM(total_cost), 0) AS total FROM productions WHERE product_id = $1",
-      [product_id],
-    );
-    const bahanTotal = parseFloat(bahanRes.rows[0].total);
-
+    // Get variable costs (including supplier costs)
     const varCostRes = await pool.query(
       `SELECT COALESCE(SUM(total_cost), 0) AS total
        FROM costs
        WHERE product_id = $1 AND behavior = 'variable'`,
       [product_id],
     );
-    const varCostTotal = parseFloat(varCostRes.rows[0].total);
+    const totalVariableCost = parseFloat(varCostRes.rows[0].total);
 
-    const totalVariableCost = bahanTotal + varCostTotal;
-    const variableCostPerUnit = totalVariableCost / unitsProduced;
+    // Get units produced (from productions or default 1 for dropship)
+    const unitsRes = await pool.query(
+      `SELECT COALESCE(MAX(units_produced), 1) AS units
+       FROM productions
+       WHERE product_id = $1 AND units_produced > 0`,
+      [product_id],
+    );
+    let unitsProduced = parseInt(unitsRes.rows[0].units) || 1;
+
+    // For dropship, if there are no productions, use batch_size from product
+    if (unitsProduced === 1) {
+      const batchRes = await pool.query(
+        "SELECT batch_size FROM products WHERE product_id = $1",
+        [product_id],
+      );
+      if (batchRes.rows.length > 0 && batchRes.rows[0].batch_size > 0) {
+        unitsProduced = batchRes.rows[0].batch_size;
+      }
+    }
+
+    const variableCostPerUnit =
+      unitsProduced > 0 ? totalVariableCost / unitsProduced : 0;
     const cmPerUnit = sellingPrice - variableCostPerUnit;
-    const marginPct = (cmPerUnit / sellingPrice) * 100;
+    const marginPct = sellingPrice > 0 ? (cmPerUnit / sellingPrice) * 100 : 0;
 
     await pool.query(
       "UPDATE products SET margin_percentage = $1 WHERE product_id = $2",
       [parseFloat(marginPct.toFixed(2)), product_id],
-    );
-
-    console.log(
-      `[recalcMargin] product=${product_id} | units=${unitsProduced} | ` +
-        `varCost/unit=${variableCostPerUnit.toFixed(4)} | CM/unit=${cmPerUnit.toFixed(4)} | margin=${marginPct.toFixed(2)}%`,
     );
   } catch (err) {
     console.error("RECALC MARGIN ERROR:", err);
@@ -1019,7 +1014,15 @@ app.get("/products", authenticateToken, async (req, res) => {
 // ─── Add Product ──────────────────────────────────────────────
 app.post("/products", authenticateToken, async (req, res) => {
   try {
-    const { name, description, selling_price, image_url, sale_unit } = req.body;
+    const {
+      name,
+      description,
+      selling_price,
+      image_url,
+      sale_unit,
+      mode,
+      batch_size,
+    } = req.body;
 
     if (!name || !selling_price)
       return res
@@ -1039,8 +1042,8 @@ app.post("/products", authenticateToken, async (req, res) => {
     const saleUnit = sale_unit || "unit";
 
     const result = await pool.query(
-      `INSERT INTO products (product_id, business_id, name, description, selling_price, margin_percentage, image_url, sale_unit)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      `INSERT INTO products (product_id, business_id, name, description, selling_price, margin_percentage, image_url, sale_unit, mode, batch_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
       [
         product_id,
         business_id,
@@ -1050,6 +1053,8 @@ app.post("/products", authenticateToken, async (req, res) => {
         0,
         image_url || null,
         saleUnit,
+        mode || "regular",
+        batch_size || 1,
       ],
     );
 
@@ -1081,7 +1086,15 @@ app.get("/products/:product_id", authenticateToken, async (req, res) => {
 app.put("/products/:product_id", authenticateToken, async (req, res) => {
   try {
     const { product_id } = req.params;
-    const { name, description, selling_price, image_url, sale_unit } = req.body;
+    const {
+      name,
+      description,
+      selling_price,
+      image_url,
+      sale_unit,
+      mode,
+      batch_size,
+    } = req.body;
 
     if (!selling_price || isNaN(parseFloat(selling_price)))
       return res
@@ -1092,14 +1105,16 @@ app.put("/products/:product_id", authenticateToken, async (req, res) => {
 
     const result = await pool.query(
       `UPDATE products
-       SET name=$1, description=$2, selling_price=$3, image_url=$4, sale_unit=$5
-       WHERE product_id=$6 RETURNING *`,
+       SET name=$1, description=$2, selling_price=$3, image_url=$4, sale_unit=$5, mode=$6, batch_size=$7
+       WHERE product_id=$8 RETURNING *`,
       [
         name,
         description || null,
         parseFloat(selling_price),
         image_url || null,
         saleUnit,
+        mode || "regular",
+        batch_size || 1,
         product_id,
       ],
     );
@@ -1145,51 +1160,51 @@ app.delete("/products/:product_id", authenticateToken, async (req, res) => {
 
 // ─── Get Costs by Product ─────────────────────────────────────
 app.get("/products/:product_id/costs", authenticateToken, async (req, res) => {
-  try {
-    const { product_id } = req.params;
-    const result = await pool.query(
-      "SELECT * FROM costs WHERE product_id = $1 ORDER BY created_at DESC",
-      [product_id],
-    );
-    res.json({ costs: result.rows });
-  } catch (err) {
-    console.error("GET COSTS ERROR:", err);
-    res.status(500).json({ message: "Server error." });
-  }
+  const { product_id } = req.params;
+  const result = await pool.query(
+    "SELECT costs_id, name, type, behavior, cost_per_unit, total_cost, cost_category FROM costs WHERE product_id = $1 ORDER BY created_at DESC",
+    [product_id],
+  );
+  res.json({ costs: result.rows });
 });
 
 // ─── Add Cost ──────────────────────────────────────────────────
 app.post("/products/:product_id/costs", authenticateToken, async (req, res) => {
   try {
     const { product_id } = req.params;
-    const { name, type, behavior, cost_per_unit, total_cost } = req.body;
+    const { name, type, behavior, cost_per_unit, total_cost, cost_category } =
+      req.body; // ← added cost_category
 
-    if (!name || !type || !behavior)
+    if (!name || !type || !behavior) {
       return res
         .status(400)
         .json({ message: "Sila lengkapkan semua maklumat." });
+    }
 
     if (
       cost_per_unit == null ||
       isNaN(parseFloat(cost_per_unit)) ||
       total_cost == null ||
       isNaN(parseFloat(total_cost))
-    )
+    ) {
       return res.status(400).json({
         message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
       });
+    }
 
-    if (!["tenaga", "indirect"].includes(type))
+    if (!["tenaga", "indirect"].includes(type)) {
       return res.status(400).json({ message: "Jenis kos tidak sah." });
+    }
 
     const business_id = await getBusinessId(req, res);
     if (!business_id) return;
 
     const costs_id = await generateId("costs", "costs_id", "cst");
 
+    // ← UPDATED: include cost_category
     const result = await pool.query(
-      `INSERT INTO costs (costs_id, business_id, product_id, name, type, behavior, cost_per_unit, total_cost)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      `INSERT INTO costs (costs_id, business_id, product_id, name, type, behavior, cost_per_unit, total_cost, cost_category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [
         costs_id,
         business_id,
@@ -1199,6 +1214,7 @@ app.post("/products/:product_id/costs", authenticateToken, async (req, res) => {
         behavior,
         parseFloat(cost_per_unit),
         parseFloat(total_cost),
+        cost_category || "standard", // default to 'standard' if not provided
       ],
     );
 
@@ -1215,27 +1231,31 @@ app.post("/products/:product_id/costs", authenticateToken, async (req, res) => {
 app.put("/costs/:costs_id", authenticateToken, async (req, res) => {
   try {
     const { costs_id } = req.params;
-    const { name, behavior, cost_per_unit, total_cost } = req.body;
+    const { name, behavior, cost_per_unit, total_cost, cost_category } =
+      req.body;
 
-    if (isNaN(parseFloat(cost_per_unit)) || isNaN(parseFloat(total_cost)))
+    if (isNaN(parseFloat(cost_per_unit)) || isNaN(parseFloat(total_cost))) {
       return res.status(400).json({
         message: "Kos per unit dan jumlah kos mesti nombor yang sah.",
       });
+    }
 
     const result = await pool.query(
-      `UPDATE costs SET name=$1, behavior=$2, cost_per_unit=$3, total_cost=$4
-       WHERE costs_id=$5 RETURNING *`,
+      `UPDATE costs SET name=$1, behavior=$2, cost_per_unit=$3, total_cost=$4, cost_category=$5
+       WHERE costs_id=$6 RETURNING *`,
       [
         name,
         behavior,
         parseFloat(cost_per_unit),
         parseFloat(total_cost),
+        cost_category || "standard",
         costs_id,
       ],
     );
 
-    if (result.rows.length === 0)
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: "Kos tidak dijumpai." });
+    }
 
     await recalcMargin(result.rows[0].product_id);
 
