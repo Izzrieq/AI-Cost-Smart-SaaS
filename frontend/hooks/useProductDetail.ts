@@ -5,6 +5,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { matchFoodImage } from "@/lib/foodImages";
 import { API_URL } from "@/lib/api";
+import { BATCHES_PER_MONTH } from "@/lib/costModel";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────
 export interface Product {
@@ -152,11 +153,10 @@ export const calcCVP = (
   isDropship: boolean = false,
 ) => {
   const variableCosts = costs.filter(c => c.behavior === "variable");
-  const fixedCosts = costs.filter(c => c.behavior === "fixed");
-
-  const ownFixedCost = fixedCosts.reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
   const allocatedFixedCost = sharedFixedCost * (salesMixPct / 100);
-  const totalFixedCost = ownFixedCost + allocatedFixedCost;
+  // Fixed costs are business-wide and shared across products; do not count
+  // the record on its owning product a second time.
+  const totalFixedCost = allocatedFixedCost;
 
   let bahanTotal = 0;
   if (isDropship) {
@@ -291,7 +291,7 @@ export function useProductDetail() {
     purchase_qty: "",
     purchase_unit: "kg",
   });
-  const [editCostForm, setEditCostForm] = useState({ name: "", behavior: "fixed", cost_per_unit: "", total_cost: "" });
+  const [editCostForm, setEditCostForm] = useState({ name: "", behavior: "fixed", cost_per_unit: "", total_cost: "", cost_category: "standard" });
 
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
@@ -321,9 +321,11 @@ export function useProductDetail() {
           const prodsData: { productions: Production[] } = await prodsRes.json();
           const c = costsData.costs || [];
           const pr = prodsData.productions || [];
-          const units = pr.length > 0
-            ? Math.max(...pr.map(x => Number(x.units_produced) || 0).filter(n => n > 0), 0) || 1
-            : 1;
+          const units = p.mode === "dropship"
+            ? Math.max(Number(p.batch_size) || 0, 1)
+            : pr.length > 0
+              ? Math.max(...pr.map(x => Number(x.units_produced) || 0).filter(n => n > 0), 0) || 1
+              : 1;
           productsWithUnits.push({ product_id: p.product_id, units });
           totalFixedCost += c.filter(x => x.behavior === "fixed").reduce((s, x) => s + parseFloat(String(x.total_cost ?? 0)), 0);
         }
@@ -399,7 +401,7 @@ export function useProductDetail() {
   const sellingPrice = parseFloat(String(product?.selling_price ?? 0));
   const totalUnits = allProductsData.reduce((s, p) => s + p.units, 0);
   const salesMixPct = totalUnits > 0 ? (unitsProduced / totalUnits) * 100 : 100;
-  const cvp = calcCVP(productions, costs, sellingPrice, unitsProduced, sharedFixedCost, salesMixPct, isDropship);
+  const cvp = calcCVP(productions, costs, sellingPrice, unitsProduced, sharedFixedCost / BATCHES_PER_MONTH, salesMixPct, isDropship);
 
   const bahanTotal = cvp.bahanTotal || 0;
   const tenagaTotal = costs.filter(c => c?.type === "tenaga").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
@@ -779,6 +781,7 @@ export function useProductDetail() {
       behavior: c.behavior,
       cost_per_unit: String(c.cost_per_unit),
       total_cost: String(c.total_cost),
+      cost_category: c.cost_category || "standard",
     });
   };
 
@@ -794,6 +797,7 @@ export function useProductDetail() {
           behavior: editCostForm.behavior,
           cost_per_unit: parseFloat(editCostForm.cost_per_unit),
           total_cost: parseFloat(editCostForm.total_cost),
+          cost_category: editCostForm.cost_category,
         }),
       });
       const data = await res.json();

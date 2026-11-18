@@ -1,229 +1,235 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-
-const MODEL_NAMES = [
-  "gemini-2.0-flash",        
-  "gemini-2.0-flash-lite",   
-  "gemini-2.5-flash",        
-  "gemini-3.5-flash",        
+const GEMINI_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash-lite",
 ];
 
-interface GeminiError extends Error {
+type ProviderFailure = Error & {
   status?: number;
-  statusText?: string;
-  errorDetails?: ErrorDetail[];
+};
+
+type ChatCompletionResponse = {
+  choices?: Array<{ message?: { content?: string | null } }>;
+  error?: { message?: string };
+};
+
+function asProviderFailure(message: string, status?: number): ProviderFailure {
+  const error = new Error(message) as ProviderFailure;
+  error.status = status;
+  return error;
 }
 
-interface ErrorDetail {
-  retryDelay?: string;
-  [key: string]: unknown;
-}
+async function requestChatCompletion({
+  provider,
+  url,
+  apiKey,
+  model,
+  systemPrompt,
+  userPrompt,
+}: {
+  provider: string;
+  url: string;
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+}): Promise<string> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      ...(provider === "OpenRouter"
+        ? {
+            "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+            "X-Title": "CostSmart",
+          }
+        : {}),
+    },
+    body: JSON.stringify({
+      model,
+      stream: false,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+    signal: AbortSignal.timeout(30_000),
+    cache: "no-store",
+  });
 
-function getRetryDelay(err: GeminiError): number | null {
-  if (!err.errorDetails || !Array.isArray(err.errorDetails)) {
-    return null;
+  const data = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
+  if (!response.ok) {
+    throw asProviderFailure(
+      data.error?.message || `${provider} returned HTTP ${response.status}`,
+      response.status,
+    );
   }
-  for (const detail of err.errorDetails) {
-    if (detail.retryDelay) {
-      const match = String(detail.retryDelay).match(/([\d.]+)s/);
-      if (match) {
-        return parseFloat(match[1]) * 1000;
-      }
-    }
-  }
-  return null;
+
+  const text = data.choices?.[0]?.message?.content?.trim();
+  if (!text) throw asProviderFailure(`${provider} returned an empty response`);
+  return text;
 }
 
-async function generateWithRetry(
+async function generateWithGemini(
   modelName: string,
-  context: string,
-  maxAttempts = 2
-) {
-  const model = genAI.getGenerativeModel({ model: modelName });
-  let lastError: GeminiError | null = null;
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw asProviderFailure("GEMINI_API_KEY is not configured", 401);
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const result = await model.generateContentStream(context);
-      return result;
-    } catch (err) {
-      const error = err as GeminiError;
-      lastError = error;
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    systemInstruction: { role: "system", parts: [{ text: systemPrompt }] },
+  });
+  const result = await model.generateContent(userPrompt);
+  const text = result.response.text().trim();
+  if (!text) throw asProviderFailure("Gemini returned an empty response");
+  return text;
+}
 
-      if (error.status === 503 || error.status === 429) {
-        const delay = getRetryDelay(error) || (Math.pow(2, attempt) * 1000 + Math.random() * 1000);
-        console.warn(
-          `Model ${modelName} ${error.status} (attempt ${attempt + 1}/${maxAttempts}), retrying in ${Math.round(delay)}ms...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-
-      console.warn(`Model ${modelName} failed with status ${error.status}:`, error.message);
-      break;
-    }
-  }
-
-  throw lastError || new Error(`Failed to generate content with model ${modelName}`);
+function createReplyStream(reply: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      // Keep the existing NDJSON contract used by the home page chat client.
+      controller.enqueue(encoder.encode(`${JSON.stringify({ chunk: reply })}\n`));
+      controller.close();
+    },
+  });
 }
 
 export async function POST(req: Request) {
-  console.log("API Key (last 4 chars):", process.env.GEMINI_API_KEY?.slice(-4));
   try {
     const { prompt, stats, products } = await req.json();
-
-    if (!prompt) {
+    if (typeof prompt !== "string" || !prompt.trim()) {
       return NextResponse.json(
         { reply: "Sila masukkan soalan anda.", success: false },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const context = `
-      Anda adalah AI perniagaan untuk platform CostSmart.
+    const systemPrompt = `Anda adalah AI perniagaan untuk platform CostSmart.
 
-      Statistik perniagaan:
-      - Jumlah produk: ${stats?.totalProducts || 0}
-      - Margin purata: ${stats?.marginPurata || 0}%
-      - Jumlah kos: RM ${stats?.totalKos || 0}
-      - Produk terkini: ${JSON.stringify(products || [])}
+Berikan cadangan yang spesifik, boleh dilakukan, dan berdasarkan data yang diberikan. Gunakan Bahasa Melayu jika pengguna menggunakan Bahasa Melayu, atau English jika pengguna menggunakan English. Kekalkan nada profesional dan jangan mendakwa sebagai penasihat kewangan profesional.`;
 
-      Soalan pengguna: ${prompt}
+    const userPrompt = `Statistik perniagaan:
+- Jumlah produk: ${stats?.totalProducts || 0}
+- Margin purata: ${stats?.marginPurata || 0}%
+- Jumlah kos: RM ${stats?.totalKos || 0}
+- Produk terkini: ${JSON.stringify(products || [])}
 
-      Berikan cadangan yang:
-      1. Spesifik dan boleh tindakan
-      2. Berdasarkan data yang diberikan
-      3. Gunakan Bahasa Melayu (jika pengguna guna BM) atau English
-      4. Profesional dan membantu
-      5. Jangan berikan nasihat kewangan profesional (disclaimer)
-    `;
+Soalan pengguna: ${prompt.trim()}`;
 
-    let result = null;
-    let lastError: GeminiError | null = null;
+    const attempts: Array<{ name: string; run: () => Promise<string> }> = [];
 
-    for (const modelName of MODEL_NAMES) {
+    if (process.env.GEMINI_API_KEY) {
+      for (const model of GEMINI_MODELS) {
+        attempts.push({
+          name: `Gemini (${model})`,
+          run: () => generateWithGemini(model, systemPrompt, userPrompt),
+        });
+      }
+    }
+
+    if (process.env.GROQ_API_KEY) {
+      attempts.push({
+        name: "Groq",
+        run: () =>
+          requestChatCompletion({
+            provider: "Groq",
+            url: "https://api.groq.com/openai/v1/chat/completions",
+            apiKey: process.env.GROQ_API_KEY!,
+            model: "openai/gpt-oss-20b",
+            systemPrompt,
+            userPrompt,
+          }),
+      });
+    }
+
+    if (process.env.OPENROUTER_API_KEY) {
+      attempts.push({
+        name: "OpenRouter free models",
+        run: () =>
+          requestChatCompletion({
+            provider: "OpenRouter",
+            url: "https://openrouter.ai/api/v1/chat/completions",
+            apiKey: process.env.OPENROUTER_API_KEY!,
+            // This router only selects models currently offered as free.
+            model: "openrouter/free",
+            systemPrompt,
+            userPrompt,
+          }),
+      });
+    }
+
+    let lastError: ProviderFailure | undefined;
+    let allAttemptsQuotaLimited = attempts.length > 0;
+    let geminiPaymentExhausted = false;
+    for (const attempt of attempts) {
+      if (geminiPaymentExhausted && attempt.name.startsWith("Gemini")) continue;
+
       try {
-        console.log(`🔄 Trying model: ${modelName}...`);
-        result = await generateWithRetry(modelName, context);
-        console.log(`✅ Model ${modelName} succeeded!`);
-        break;
-      } catch (err) {
-        const error = err as GeminiError;
-        lastError = error;
-        console.warn(`❌ Model ${modelName} failed:`, error.message);
-
-        if (error.status === 429) {
-          console.warn(`⚠️ Quota exceeded for ${modelName}, trying next model...`);
-          continue;
+        const reply = await attempt.run();
+        console.info(`CostSmart AI answered with ${attempt.name}`);
+        return new Response(createReplyStream(reply), {
+          headers: {
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-store",
+          },
+        });
+      } catch (cause) {
+        lastError = cause as ProviderFailure;
+        const errorMessage = lastError.message.toLowerCase();
+        if (
+          attempt.name.startsWith("Gemini") &&
+          (lastError.status === 402 ||
+            errorMessage.includes("prepayment credits are depleted") ||
+            errorMessage.includes("billing"))
+        ) {
+          geminiPaymentExhausted = true;
         }
-
-        if (error.status === 404) {
-          console.warn(`⚠️ Model ${modelName} not found, trying next model...`);
-          continue;
-        }
+        if (lastError.status !== 429) allAttemptsQuotaLimited = false;
+        console.warn(`${attempt.name} failed; trying the next configured provider.`, {
+          status: lastError.status,
+          message: lastError.message,
+        });
       }
     }
 
-    if (!result) {
-      console.error("All models failed. Last error:", lastError);
-
-      // ─── Check if it's a billing/credit issue ──────────────────
-      const isBillingError = lastError?.message?.includes("prepayment credits are depleted") ||
-                             lastError?.message?.includes("billing");
-
-      if (isBillingError) {
-        return NextResponse.json(
-          {
-            reply: "Maaf, kredit prabayar AI telah habis. Sila tambah kredit atau tunggu sehingga esok untuk kuota percuma. 💳\n\n💡 Tips: Anda boleh dapatkan API key baru di https://aistudio.google.com/",
-            success: false,
-          },
-          { status: 429 }
-        );
-      }
-
-      if (lastError?.status === 503) {
-        return NextResponse.json(
-          {
-            reply: "Maaf, model AI sedang sibuk. Sila cuba dalam beberapa minit. 🔄",
-            success: false,
-          },
-          { status: 503 }
-        );
-      }
-
-      if (lastError?.status === 429) {
-        return NextResponse.json(
-          {
-            reply: "Maaf, had permintaan percuma AI hari ini telah dicapai untuk semua model. Sila cuba esok pagi. 🕒",
-            success: false,
-          },
-          { status: 429 }
-        );
-      }
-
+    if (attempts.length === 0) {
       return NextResponse.json(
-        {
-          reply: "Maaf, tiada model AI yang tersedia pada masa ini. Sila cuba sebentar lagi. 🤖",
-          success: false,
-        },
-        { status: 500 }
+        { reply: "Tiada penyedia AI dikonfigurasi. Sila tambah API key AI pada environment server.", success: false },
+        { status: 503 },
       );
     }
 
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of result.stream) {
-            const text = chunk.text();
-            controller.enqueue(
-              new TextEncoder().encode(JSON.stringify({ chunk: text }) + "\n")
-            );
-          }
-          controller.close();
-        } catch (err) {
-          console.error("Streaming error:", err);
-          controller.error(err);
-        }
-      },
-    });
-
-    return new Response(readableStream, {
-      headers: {
-        "Content-Type": "application/x-ndjson",
-      },
-    });
-  } catch (error: unknown) {
-    console.error("AI Error:", error);
-    const err = error as GeminiError;
-
-    if (err.status === 429) {
-      return NextResponse.json(
-        {
-          reply: "Maaf, had permintaan percuma AI hari ini telah dicapai. Sila cuba esok pagi. 🕒",
-          success: false,
-        },
-        { status: 429 }
+    if (geminiPaymentExhausted) {
+      const backupsConfigured = Boolean(
+        process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY,
       );
+      const reply = backupsConfigured
+        ? "Kredit Gemini telah habis dan penyedia AI sandaran tidak tersedia. Semak API key serta had penggunaan Groq/OpenRouter."
+        : "Kredit prabayar Gemini telah habis. Untuk terus menggunakan CostSmart AI secara percuma, tambah GROQ_API_KEY dan/atau OPENROUTER_API_KEY dalam frontend/.env.local, kemudian mulakan semula server. Tidak perlu tambah kredit Gemini jika anda menggunakan penyedia sandaran.";
+      return NextResponse.json({ reply, success: false }, { status: 402 });
     }
 
-    if (err.status === 503) {
-      return NextResponse.json(
-        {
-          reply: "Maaf, model AI sedang sibuk. Sila cuba dalam beberapa minit. 🔄",
-          success: false,
-        },
-        { status: 503 }
-      );
-    }
+    const status = allAttemptsQuotaLimited ? 429 : lastError?.status === 503 ? 503 : 502;
+    const reply = allAttemptsQuotaLimited
+      ? "Had penggunaan AI percuma buat masa ini telah dicapai pada semua penyedia. Sila cuba lagi kemudian."
+      : "Maaf, semua penyedia AI sedang tidak tersedia. Sila cuba sebentar lagi.";
 
+    return NextResponse.json({ reply, success: false }, { status });
+  } catch (error) {
+    console.error("AI request failed:", error);
     return NextResponse.json(
-      {
-        reply: "Maaf, saya tidak dapat memproses permintaan anda. Sila cuba sebentar lagi. 🤖",
-        success: false,
-      },
-      { status: 500 }
+      { reply: "Maaf, saya tidak dapat memproses permintaan anda. Sila cuba sebentar lagi.", success: false },
+      { status: 500 },
     );
   }
 }

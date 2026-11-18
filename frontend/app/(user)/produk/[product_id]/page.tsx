@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import DropshipProductDetail from "@/components/products/dropship/DropShipProductDetail";
 import RegularProductDetail from "@/components/products/regular/RegularProductDetail";
@@ -19,19 +20,20 @@ function LoadingSpinner() {
 export default function ProductDetailPage() {
   const [isDropship, setIsDropship] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
+  const { product_id } = useParams<{ product_id: string }>();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    fetch(`${API_URL}/business`, {
+    fetch(`${API_URL}/products/${product_id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(res => res.json())
       .then(data => {
-        setIsDropship(data.business?.type === "dropship");
+        setIsDropship(data.product?.mode === "dropship");
       })
       .catch(() => setIsDropship(false))
       .finally(() => setLoading(false));
-  }, []);
+  }, [product_id]);
 
   if (loading) return <LoadingSpinner />;
 

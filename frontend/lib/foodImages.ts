@@ -44,7 +44,7 @@ export const foodImageMap: { keywords: string[]; url: string }[] = [
     url: "https://images.pexels.com/photos/33778514/pexels-photo-33778514.jpeg?auto=compress&w=400",
   },
   {
-    keywords: ["kek vanilla", "vanilla cake", "kek putih", "white cake"],
+    keywords: ["kek vanilla", "vanilla cake", "kek putih", "white cake", "butter cake"],
     url: "https://images.pexels.com/photos/291528/pexels-photo-291528.jpeg?auto=compress&w=400",
   },
   {

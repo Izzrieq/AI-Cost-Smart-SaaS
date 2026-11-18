@@ -69,6 +69,21 @@ export default function EditCostModal({
           </div>
         </div>
 
+        {selectedCost.type === "indirect" && (
+          <div className="pd-field">
+            <label className="pd-field-label">Kategori Kos</label>
+            <select
+              value={editCostForm.cost_category || "standard"}
+              onChange={(e) => onEditChange({ ...editCostForm, cost_category: e.target.value })}
+            >
+              <option value="standard">Kos biasa</option>
+              <option value="supplier">Supplier</option>
+              <option value="shipping">Penghantaran</option>
+              <option value="packaging">Pembungkusan</option>
+            </select>
+          </div>
+        )}
+
         <div className="pd-modal-grid">
           <div className="pd-field">
             <label className="pd-field-label">Kos/Unit (RM)</label>

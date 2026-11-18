@@ -38,24 +38,24 @@ export default function AdminSidebar({ isSuperAdmin, onLogout }: AdminSidebarPro
           </Link>
         )}
 
-        <Link href="/admin/users" className={isActive("/admin/users") ? styles.active : ""}>
+        <Link href="/admin/pengguna" className={isActive("/admin/pengguna") ? styles.active : ""}>
           <UsersIcon />
           Pengguna
         </Link>
 
-        <Link href="/admin/products" className={isActive("/admin/products") ? styles.active : ""}>
+        <Link href="/admin/produk" className={isActive("/admin/produk") ? styles.active : ""}>
           <PackageIcon />
           Produk
         </Link>
 
-        <Link href="/admin/reports" className={isActive("/admin/reports") ? styles.active : ""}>
+        <Link href="/admin/laporan" className={isActive("/admin/laporan") ? styles.active : ""}>
           <FileTextIcon />
           Laporan
         </Link>
 
-        <Link href="/analisis" className={isActive("/analisis") ? styles.active : ""}>
+        <Link href="/admin/analisa" className={isActive("/admin/analisa") ? styles.active : ""}>
           <BarChartIcon />
-          Analisis
+          Analisa
         </Link>
 
         {isSuperAdmin && (

@@ -1,48 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import AdminSidebar from "../../components/AdminSidebar";
+import AdminSidebar from "@/app/(admin)/components/AdminSidebar";
 import { API_URL } from "@/lib/api";
+import styles from "./dashboard.module.css";
 
-interface User {
-  user_id: string;
-  name: string;
-  email: string;
-  role: string;
-}
-
-interface DashboardStats {
+type AdminUser = { user_id: string; name: string; email: string; role: string };
+type RoleCount = { role: string; count: number };
+type RecentUser = AdminUser & { created_at: string };
+type DashboardStats = {
   totalUsers: number;
-  usersByRole: { role: string; count: number }[];
+  usersByRole: RoleCount[];
   totalProducts: number;
   totalCost: number;
   avgMargin: number;
   totalBusinesses: number;
-  recentUsers: {
-    user_id: string;
-    name: string;
-    email: string;
-    role: string;
-    created_at: string;
-  }[];
-}
-
-interface Feedback {
-  report_id: number;
-  user_id: string;
-  type: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  created_at: string;
-  user_name?: string;
-  user_email?: string;
-}
-
-interface DailyReport {
+  recentUsers: RecentUser[];
+};
+type DailyReport = {
   resetIn: string;
   resetInMs: number;
   newBusinesses: number;
@@ -50,577 +28,341 @@ interface DailyReport {
   newUsers: number;
   newReports: number;
   totalActivities: number;
+};
+type Feedback = {
+  report_id: number;
+  type: string;
+  title: string;
+  status: string;
+  created_at: string;
+  user_name?: string;
+  user_email?: string;
+};
+
+const emptyStats: DashboardStats = {
+  totalUsers: 0,
+  usersByRole: [],
+  totalProducts: 0,
+  totalCost: 0,
+  avgMargin: 0,
+  totalBusinesses: 0,
+  recentUsers: [],
+};
+
+async function getJson<T>(url: string, token: string): Promise<T | null> {
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("ms-MY").format(Number(value) || 0);
+}
+
+function formatMoney(value: number) {
+  return `RM ${new Intl.NumberFormat("ms-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value) || 0)}`;
+}
+
+function timeAgo(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "Masa tidak diketahui";
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) return "Baru sahaja";
+  if (minutes < 60) return `${minutes} minit lalu`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} jam lalu`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "Semalam" : `${days} hari lalu`;
+}
+
+function displayRole(role: string) {
+  const labels: Record<string, string> = {
+    super_admin: "Super admin",
+    admin: "Admin",
+    business_owner: "Pemilik perniagaan",
+    staff: "Kakitangan",
+    user: "Pengguna",
+  };
+  return labels[role] || role;
 }
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [dailyReport, setDailyReport] = useState<DailyReport | null>(null);
-  const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
+  const [user, setUser] = useState<AdminUser | null>(null);
+  const [stats, setStats] = useState<DashboardStats>(emptyStats);
+  const [daily, setDaily] = useState<DailyReport | null>(null);
+  const [reports, setReports] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
-  const [countdown, setCountdown] = useState("");
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  const isSuperAdmin = user?.role === "super_admin";
+
+  const loadDashboard = useCallback(async (token: string) => {
+    const [statsData, dailyData, reportsData] = await Promise.all([
+      getJson<DashboardStats>(`${API_URL}/admin/dashboard-stats`, token),
+      getJson<DailyReport>(`${API_URL}/admin/daily-report`, token),
+      getJson<{ reports?: Feedback[] }>(`${API_URL}/admin/reports?limit=5`, token),
+    ]);
+    if (statsData) setStats({ ...emptyStats, ...statsData });
+    setDaily(dailyData);
+    setReports(reportsData?.reports || []);
+    setLoadError(!statsData && !dailyData && !reportsData);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     const storedUser = localStorage.getItem("user");
-
     if (!token || !storedUser) {
-      router.push("/login");
+      router.replace("/login");
       return;
     }
 
-    const parsed = JSON.parse(storedUser);
-    if (parsed.role !== "admin" && parsed.role !== "super_admin") {
-      router.push("/home");
-      return;
-    }
-    setUser(parsed);
-    setIsSuperAdmin(parsed.role === "super_admin");
-
-    const fetchDashboardData = async () => {
-      try {
-        const statsRes = await fetch(`${API_URL}/admin/dashboard-stats`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (statsRes.ok) {
-          const statsData = await statsRes.json();
-          setStats(statsData);
-        } else {
-          const homeRes = await fetch(`${API_URL}/home/stats`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (homeRes.ok) {
-            const homeStats = await homeRes.json();
-            setStats({
-              totalUsers: 0,
-              usersByRole: [],
-              totalProducts: homeStats.totalProducts || 0,
-              totalCost: homeStats.totalKos || 0,
-              avgMargin: homeStats.marginPurata || 0,
-              totalBusinesses: 1,
-              recentUsers: [],
-            });
-          }
-        }
-
-        const dailyRes = await fetch(`${API_URL}/admin/daily-report`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (dailyRes.ok) {
-          const dailyData = await dailyRes.json();
-          setDailyReport(dailyData);
-        }
-
-        const feedbackRes = await fetch(`${API_URL}/admin/reports?limit=5`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (feedbackRes.ok) {
-          const feedbackData = await feedbackRes.json();
-          setFeedbacks(feedbackData.reports || []);
-        }
-      } catch (err) {
-        console.error("Fetch error:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchDashboardData();
-  }, [router]);
-
-  // ─── Countdown timer ──────────────────────────────────────────
-  useEffect(() => {
-    if (!dailyReport?.resetInMs) return;
-
-    const resetTarget = new Date().getTime() + dailyReport.resetInMs;
-
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const remaining = resetTarget - now;
-
-      if (remaining <= 0) {
-        setCountdown("Reset sekarang...");
+    try {
+      const parsed = JSON.parse(storedUser) as AdminUser;
+      if (parsed.role !== "admin" && parsed.role !== "super_admin") {
+        router.replace("/home");
         return;
       }
-
-      const hours = Math.floor(remaining / 3600000);
-      const minutes = Math.floor((remaining % 3600000) / 60000);
-      const seconds = Math.floor((remaining % 60000) / 1000);
-      setCountdown(`${hours}h ${minutes}m ${seconds}s`);
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [dailyReport]);
-
-  // ─── Format helpers ──────────────────────────────────────────
-  const getInitials = (name: string) => {
-    return name ? name.charAt(0).toUpperCase() : "A";
-  };
-
-  const getTimeAgo = (dateString: string) => {
-    try {
-      const date = new Date(dateString);
-      const now = new Date();
-      const diffMs = now.getTime() - date.getTime();
-      const diffMins = Math.floor(diffMs / 60000);
-      const diffHours = Math.floor(diffMs / 3600000);
-      const diffDays = Math.floor(diffMs / 86400000);
-
-      if (diffMins < 1) return "Baru sahaja";
-      if (diffMins < 60) return `${diffMins} minit lalu`;
-      if (diffHours < 24) return `${diffHours} jam lalu`;
-      if (diffDays === 1) return "Semalam";
-      return `${diffDays} hari lalu`;
+      setUser(parsed);
+      void loadDashboard(token);
     } catch {
-      return "Terkini";
+      router.replace("/login");
     }
-  };
+  }, [loadDashboard, router]);
 
-  // ─── Stats cards data ────────────────────────────────────────
-  const adminCount = stats?.usersByRole?.find(r => r.role === "admin")?.count || 0;
+  const roleTotal = useMemo(
+    () => stats.usersByRole.reduce((total, item) => total + Number(item.count || 0), 0),
+    [stats.usersByRole],
+  );
+  const roleGradient = useMemo(() => {
+    if (!roleTotal) return "conic-gradient(#eaf1eb 0deg 360deg)";
+    const palette = ["#398558", "#85b995", "#b9d9c0", "#d8e6d9"];
+    let angle = 0;
+    const slices = stats.usersByRole.map((item, index) => {
+      const nextAngle = angle + (Number(item.count || 0) / roleTotal) * 360;
+      const slice = `${palette[index % palette.length]} ${angle}deg ${nextAngle}deg`;
+      angle = nextAngle;
+      return slice;
+    });
+    return `conic-gradient(${slices.join(", ")})`;
+  }, [roleTotal, stats.usersByRole]);
 
-  const statsCards = [
-    {
-      label: "Jumlah Pengguna",
-      value: stats?.totalUsers?.toLocaleString() || "0",
-      icon: <UsersIcon />,
-      change: adminCount > 0 ? `${adminCount} Admin` : "Tiada Admin",
-    },
-    {
-      label: "Jumlah Produk",
-      value: stats?.totalProducts?.toLocaleString() || "0",
-      icon: <PackageIcon />,
-      change: (stats?.totalProducts || 0) > 0 ? "Seluruh platform" : "Tiada produk",
-    },
+  const activity = [
+    { label: "Pengguna baharu", count: daily?.newUsers || 0, icon: <UsersIcon /> },
+    { label: "Perniagaan baharu", count: daily?.newBusinesses || 0, icon: <BuildingIcon /> },
+    { label: "Produk ditambah", count: daily?.newProducts || 0, icon: <BoxIcon /> },
+    { label: "Laporan diterima", count: daily?.newReports || 0, icon: <FlagIcon /> },
   ];
+  const maxActivity = Math.max(1, ...activity.map((item) => item.count));
 
-  const dailyStats = [
-    { label: "Perniagaan Baru", value: dailyReport?.newBusinesses || 0, icon: <BuildingIcon /> },
-    { label: "Produk Baru", value: dailyReport?.newProducts || 0, icon: <PackageIcon /> },
-    { label: "Pengguna Baru", value: dailyReport?.newUsers || 0, icon: <UsersIcon /> },
-    { label: "Laporan Baru", value: dailyReport?.newReports || 0, icon: <FileTextIcon /> },
-  ];
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "pending": return "🔴";
-      case "reviewing": return "🟡";
-      case "resolved": return "🟢";
-      case "closed": return "⚪";
-      default: return "🔵";
-    }
+  const logout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    router.replace("/login");
   };
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case "pending": return "Perlu Tindakan";
-      case "reviewing": return "Sedang Dikaji";
-      case "resolved": return "Selesai";
-      case "closed": return "Ditutup";
-      default: return status;
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.clear();
-    router.push("/login");
-  };
+  const firstName = user?.name?.trim().split(/\s+/)[0] || "Admin";
+  const today = new Intl.DateTimeFormat("ms-MY", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date());
 
   if (loading) {
     return (
-      <div style={styles.loading}>
-        <div style={styles.spinner} />
-        <span>Memuatkan dashboard...</span>
-        <style>{`
-          @keyframes spin { to { transform: rotate(360deg); } }
-        `}</style>
+      <div className={styles.loadingScreen}>
+        <span className={styles.loader} aria-hidden="true" />
+        <p>Memuatkan gambaran keseluruhan...</p>
       </div>
     );
   }
 
   return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        .admin-root {
-          display: flex;
-          min-height: 100vh;
-          background: #f1f5f9;
-          font-family: 'Plus Jakarta Sans', sans-serif;
-        }
-
-        .main-content {
-          flex: 1;
-          padding: 24px 32px 40px;
-          min-width: 0;
-        }
-
-        .topbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 28px;
-          flex-wrap: wrap;
-          gap: 12px;
-        }
-        .topbar-left h2 { font-size: 22px; font-weight: 700; color: #0f172a; }
-        .topbar-left p { font-size: 14px; color: #64748b; }
-        .topbar-right .user-badge {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          background: #fff;
-          padding: 6px 14px 6px 6px;
-          border-radius: 99px;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-        }
-        .topbar-right .user-avatar {
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #fff;
-          font-weight: 700;
-          font-size: 14px;
-        }
-        .topbar-right .user-name { font-size: 14px; font-weight: 600; color: #1e293b; }
-        .topbar-right .user-role { font-size: 11px; color: #94a3b8; font-weight: 500; }
-
-        .stats-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 16px;
-          margin-bottom: 20px;
-        }
-        .stat-card {
-          background: #fff;
-          border-radius: 16px;
-          padding: 18px 20px;
-          border: 1px solid #f1f5f9;
-          box-shadow: 0 1px 6px rgba(0,0,0,0.04);
-          transition: transform 0.2s;
-        }
-        .stat-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.06); }
-        .stat-card .stat-icon { 
-          width: 32px; 
-          height: 32px;
-          margin-bottom: 8px;
-          color: #2563eb;
-        }
-        .stat-card .stat-icon svg { width: 100%; height: 100%; }
-        .stat-card .stat-label { font-size: 13px; font-weight: 500; color: #64748b; margin-bottom: 4px; }
-        .stat-card .stat-value { font-size: 24px; font-weight: 700; color: #0f172a; }
-        .stat-card .stat-change {
-          font-size: 12px;
-          font-weight: 600;
-          margin-top: 6px;
-          display: inline-block;
-          padding: 2px 10px;
-          border-radius: 99px;
-          background: #f1f5f9;
-          color: #64748b;
-        }
-
-        .daily-report-card {
-          background: linear-gradient(135deg, #0f172a, #1e293b);
-          border-radius: 16px;
-          padding: 20px 24px;
-          margin-bottom: 20px;
-          color: #fff;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          flex-wrap: wrap;
-          gap: 16px;
-          border: 1px solid #334155;
-        }
-        .daily-report-left { display: flex; align-items: center; gap: 16px; }
-        .daily-report-icon {
-          width: 48px;
-          height: 48px;
-          border-radius: 12px;
-          background: rgba(59, 130, 246, 0.2);
-          border: 1px solid rgba(59, 130, 246, 0.3);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #60a5fa;
-        }
-        .daily-report-icon svg { width: 24px; height: 24px; }
-        .daily-report-title { font-size: 16px; font-weight: 700; }
-        .daily-report-sub { font-size: 13px; color: #94a3b8; margin-top: 2px; }
-        .daily-report-stats {
-          display: flex;
-          gap: 20px;
-          flex-wrap: wrap;
-        }
-        .daily-stat-item { text-align: center; }
-        .daily-stat-item .daily-stat-icon {
-          width: 20px;
-          height: 20px;
-          margin: 0 auto 4px;
-          color: #60a5fa;
-        }
-        .daily-stat-item .daily-stat-icon svg { width: 100%; height: 100%; }
-        .daily-stat-value { font-size: 20px; font-weight: 700; color: #60a5fa; }
-        .daily-stat-label { font-size: 11px; color: #94a3b8; font-weight: 500; }
-        .daily-report-reset {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 13px;
-          color: #94a3b8;
-        }
-        .daily-report-reset strong { color: #fbbf24; }
-
-        .feedback-section {
-          background: #fff;
-          border-radius: 16px;
-          border: 1px solid #f1f5f9;
-          padding: 20px 24px;
-          box-shadow: 0 1px 6px rgba(0,0,0,0.04);
-        }
-        .feedback-section h3 {
-          font-size: 16px;
-          font-weight: 700;
-          color: #0f172a;
-          margin-bottom: 16px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-        .feedback-item {
-          display: flex;
-          align-items: flex-start;
-          gap: 12px;
-          padding: 10px 0;
-          border-bottom: 1px solid #f8fafc;
-        }
-        .feedback-item:last-child { border-bottom: none; }
-        .feedback-status { font-size: 16px; flex-shrink: 0; margin-top: 2px; }
-        .feedback-content { flex: 1; }
-        .feedback-title { font-size: 14px; font-weight: 600; color: #1e293b; }
-        .feedback-meta {
-          font-size: 12px;
-          color: #94a3b8;
-          margin-top: 2px;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-        .feedback-meta .badge {
-          padding: 1px 8px;
-          border-radius: 99px;
-          font-size: 10px;
-          font-weight: 600;
-        }
-        .badge-pending { background: #fef2f2; color: #dc2626; }
-        .badge-reviewing { background: #fffbeb; color: #d97706; }
-        .badge-resolved { background: #f0fdf4; color: #16a34a; }
-        .badge-closed { background: #f1f5f9; color: #64748b; }
-        .feedback-empty { color: #94a3b8; font-size: 14px; padding: 12px 0; text-align: center; }
-
-        .super-admin-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          font-size: 10px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          padding: 2px 10px;
-          border-radius: 99px;
-          background: linear-gradient(135deg, #fbbf24, #f59e0b);
-          color: #78350f;
-          margin-left: 6px;
-        }
-
-        @media (max-width: 768px) {
-          .main-content { padding: 16px; }
-          .stats-grid { grid-template-columns: 1fr 1fr; }
-          .daily-report-card { flex-direction: column; align-items: stretch; }
-          .daily-report-stats { justify-content: space-around; }
-        }
-      `}</style>
-
-      <div className="admin-root">
-        {/* ─── Sidebar Component ─── */}
-        <AdminSidebar isSuperAdmin={isSuperAdmin} onLogout={handleLogout} />
-
-        {/* ─── MAIN CONTENT ─── */}
-        <main className="main-content">
-          <header className="topbar">
-            <div className="topbar-left">
-              <h2>
-                Selamat datang, {user?.name?.split(" ")[0] || "Admin"}
-                {isSuperAdmin && <span className="super-admin-badge">⭐ Super Admin</span>}
-              </h2>
-              <p>Ringkasan statistik dan aktiviti seluruh platform</p>
+    <div className={styles.adminShell}>
+      <AdminSidebar isSuperAdmin={isSuperAdmin} onLogout={logout} />
+      <main className={styles.main}>
+        <header className={styles.topbar}>
+          <div>
+            <p className={styles.eyebrow}>PUSAT KAWALAN</p>
+            <h1>Gambaran keseluruhan</h1>
+            <p className={styles.date}>{today}</p>
+          </div>
+          <div className={styles.profile}>
+            <div className={styles.avatar}>{firstName.charAt(0).toUpperCase()}</div>
+            <div className={styles.profileCopy}>
+              <strong>{user?.name || "Admin"}</strong>
+              <span>{isSuperAdmin ? "Super admin" : "Pentadbir"}</span>
             </div>
-            <div className="topbar-right">
-              <div className="user-badge">
-                <div className="user-avatar">{user?.name ? getInitials(user.name) : "A"}</div>
-                <div>
-                  <div className="user-name">{user?.name || "Admin"}</div>
-                  <div className="user-role">{isSuperAdmin ? "Super Admin" : "Pentadbir"}</div>
-                </div>
-              </div>
-            </div>
-          </header>
+            <span className={styles.onlineDot} aria-label="Aktif" />
+          </div>
+        </header>
 
-          {/* Stats Cards */}
-          <section className="stats-grid">
-            {statsCards.map((stat, idx) => (
-              <div key={idx} className="stat-card">
-                <div className="stat-icon">{stat.icon}</div>
-                <div className="stat-label">{stat.label}</div>
-                <div className="stat-value">{stat.value}</div>
-                <div className="stat-change">{stat.change}</div>
-              </div>
-            ))}
-          </section>
+        {loadError && (
+          <div className={styles.errorBanner} role="status">
+            Data dashboard belum dapat dimuatkan. Cuba segarkan semula halaman.
+            <button onClick={() => {
+              const token = localStorage.getItem("token");
+              if (token) {
+                setLoading(true);
+                void loadDashboard(token);
+              }
+            }}>Cuba lagi</button>
+          </div>
+        )}
 
-          {/* Daily Report Card */}
-          <div className="daily-report-card">
-            <div className="daily-report-left">
-              <div className="daily-report-icon">
-                <TrendingUpIcon />
-              </div>
-              <div>
-                <div className="daily-report-title">Laporan 24 Jam</div>
-                <div className="daily-report-sub">{dailyReport?.totalActivities || 0} aktiviti dalam 24 jam terkini</div>
-              </div>
+        <section className={styles.welcomeCard}>
+          <div className={styles.welcomeCopy}>
+            <span className={styles.welcomePill}><span /> Ringkasan platform</span>
+            <h2>Hai {firstName}, selamat kembali.</h2>
+            <p>Ini ringkasan aktiviti CostSmart dan perkembangan komuniti hari ini.</p>
+          </div>
+          <div className={styles.welcomeArtwork} aria-hidden="true">
+            <div className={styles.artRing} />
+            <div className={styles.artCard}><span /><span /><span /></div>
+            <div className={styles.artDot} />
+          </div>
+        </section>
+
+        <section className={styles.metricGrid} aria-label="Statistik platform">
+          <MetricCard label="Jumlah pengguna" value={formatNumber(stats.totalUsers)} hint="Akaun berdaftar" icon={<UsersIcon />} accent="green" />
+          <MetricCard label="Perniagaan" value={formatNumber(stats.totalBusinesses)} hint="Perniagaan berdaftar" icon={<BuildingIcon />} accent="blue" />
+          <MetricCard label="Produk" value={formatNumber(stats.totalProducts)} hint="Di seluruh platform" icon={<BoxIcon />} accent="violet" />
+          <MetricCard label="Jumlah kos direkod" value={formatMoney(stats.totalCost)} hint="Terkumpul dalam sistem" icon={<WalletIcon />} accent="amber" />
+        </section>
+
+        <section className={styles.contentGrid}>
+          <article className={`${styles.panel} ${styles.activityPanel}`}>
+            <div className={styles.panelHeading}>
+              <div><span className={styles.sectionEyebrow}>AKTIVITI</span><h2>Aktiviti 24 jam</h2></div>
+              <span className={styles.periodTag}>24 jam terkini</span>
             </div>
-            <div className="daily-report-stats">
-              {dailyStats.map((item, idx) => (
-                <div key={idx} className="daily-stat-item">
-                  <div className="daily-stat-icon">{item.icon}</div>
-                  <div className="daily-stat-value">{item.value}</div>
-                  <div className="daily-stat-label">{item.label}</div>
+            <div className={styles.activityTotal}>
+              <strong>{formatNumber(daily?.totalActivities || 0)}</strong>
+              <span>aktiviti direkodkan</span>
+            </div>
+            <div className={styles.activityList}>
+              {activity.map((item) => (
+                <div className={styles.activityRow} key={item.label}>
+                  <span className={styles.activityIcon}>{item.icon}</span>
+                  <span className={styles.activityLabel}>{item.label}</span>
+                  <div className={styles.barTrack}><span style={{ width: item.count ? `${Math.max(2, (item.count / maxActivity) * 100)}%` : "0%" }} /></div>
+                  <strong className={styles.activityCount}>{formatNumber(item.count)}</strong>
                 </div>
               ))}
             </div>
-            <div className="daily-report-reset">
-              <RefreshIcon />
-              <span>Reset dalam <strong>{countdown || dailyReport?.resetIn || "--"}</strong></span>
-            </div>
-          </div>
+            <p className={styles.resetNote}>Kiraan aktiviti bermula semula setiap hari pada tengah malam.</p>
+          </article>
 
-          {/* Feedback Section */}
-          <section className="feedback-section">
-            <h3>
-              📋 Feedback Terkini
-              <Link href="/admin/reports" style={{ fontSize: 13, fontWeight: 600, color: "#3b82f6", textDecoration: "none" }}>
-                Lihat Semua →
-              </Link>
-            </h3>
-            {feedbacks.length > 0 ? (
-              feedbacks.map((fb) => (
-                <div key={fb.report_id} className="feedback-item">
-                  <div className="feedback-status">{getStatusColor(fb.status)}</div>
-                  <div className="feedback-content">
-                    <div className="feedback-title">{fb.title}</div>
-                    <div className="feedback-meta">
-                      <span>Dari: {fb.user_name || fb.user_email || "Unknown"}</span>
-                      <span>•</span>
-                      <span>{getTimeAgo(fb.created_at)}</span>
-                      <span>•</span>
-                      <span className={`badge badge-${fb.status}`}>{getStatusText(fb.status)}</span>
-                      <span className="badge" style={{ background: "#f1f5f9", color: "#64748b" }}>
-                        {fb.type === "bug" ? "🐛 Bug" : 
-                         fb.type === "feature" ? "✨ Feature" : 
-                         fb.type === "feedback" ? "💬 Feedback" : "📝 Other"}
-                      </span>
-                    </div>
+          <article className={`${styles.panel} ${styles.peoplePanel}`}>
+            <div className={styles.panelHeading}>
+              <div><span className={styles.sectionEyebrow}>KOMUNITI</span><h2>Pengguna mengikut peranan</h2></div>
+              <Link href="/admin/users" className={styles.textLink}>Lihat pengguna <ArrowIcon /></Link>
+            </div>
+            <div className={styles.peopleSummary}>
+              <div className={styles.donut} style={{ "--donut-gradient": roleGradient } as CSSProperties}>
+                <div><strong>{formatNumber(stats.totalUsers)}</strong><span>pengguna</span></div>
+              </div>
+              <div className={styles.roleLegend}>
+                {stats.usersByRole.length ? stats.usersByRole.map((item, index) => (
+                  <div className={styles.legendRow} key={item.role}>
+                    <span className={`${styles.legendDot} ${styles[`legend${index % 4}`]}`} />
+                    <span>{displayRole(item.role)}</span>
+                    <strong>{formatNumber(Number(item.count))}</strong>
                   </div>
-                </div>
-              ))
-            ) : (
-              <div className="feedback-empty">Tiada feedback. User belum buat sebarang laporan.</div>
-            )}
-          </section>
-        </main>
-      </div>
-    </>
+                )) : <p className={styles.emptyInline}>Belum ada data pengguna.</p>}
+              </div>
+            </div>
+            <div className={styles.marginStrip}>
+              <div className={styles.marginIcon}><TrendIcon /></div>
+              <div><span>Purata margin produk</span><strong>{Number(stats.avgMargin || 0).toLocaleString("ms-MY", { maximumFractionDigits: 1 })}%</strong></div>
+              <span className={styles.marginCaption}>Seluruh platform</span>
+            </div>
+          </article>
+        </section>
+
+        <section className={styles.lowerGrid}>
+          <article className={styles.panel}>
+            <div className={styles.panelHeading}>
+              <div><span className={styles.sectionEyebrow}>PENDAFTARAN</span><h2>Pengguna terkini</h2></div>
+              <Link href="/admin/users" className={styles.textLink}>Lihat semua <ArrowIcon /></Link>
+            </div>
+            {stats.recentUsers.length ? (
+              <div className={styles.userList}>
+                {stats.recentUsers.map((person) => (
+                  <div className={styles.userRow} key={person.user_id}>
+                    <div className={styles.userAvatar}>{(person.name || "U").charAt(0).toUpperCase()}</div>
+                    <div className={styles.userInfo}><strong>{person.name || "Pengguna"}</strong><span>{person.email}</span></div>
+                    <span className={styles.roleBadge}>{displayRole(person.role)}</span>
+                    <time>{timeAgo(person.created_at)}</time>
+                  </div>
+                ))}
+              </div>
+            ) : <EmptyState text="Belum ada pendaftaran untuk dipaparkan." />}
+          </article>
+
+          <article className={styles.panel}>
+            <div className={styles.panelHeading}>
+              <div><span className={styles.sectionEyebrow}>MAKLUM BALAS</span><h2>Laporan terkini</h2></div>
+              <Link href="/admin/reports" className={styles.textLink}>Lihat semua <ArrowIcon /></Link>
+            </div>
+            {reports.length ? (
+              <div className={styles.reportList}>
+                {reports.slice(0, 5).map((report) => (
+                  <Link className={styles.reportRow} href="/admin/reports" key={report.report_id}>
+                    <span className={`${styles.reportType} ${report.type === "bug" ? styles.reportBug : report.type === "feature" ? styles.reportFeature : ""}`}>
+                      {report.type === "bug" ? <BugIcon /> : report.type === "feature" ? <SparkIcon /> : <ChatIcon />}
+                    </span>
+                    <span className={styles.reportInfo}><strong>{report.title}</strong><span>{report.user_name || report.user_email || "Pengguna"} · {timeAgo(report.created_at)}</span></span>
+                    <span className={`${styles.statusBadge} ${styles[`status_${report.status}`] || ""}`}>{report.status === "pending" ? "Baharu" : report.status === "reviewing" ? "Disemak" : report.status === "resolved" ? "Selesai" : "Ditutup"}</span>
+                  </Link>
+                ))}
+              </div>
+            ) : <EmptyState text="Tiada laporan baharu buat masa ini." />}
+          </article>
+        </section>
+
+        <footer className={styles.footer}>
+          <span>CostSmart Admin</span><span>Maklumat dikemas kini daripada pangkalan data platform</span>
+        </footer>
+      </main>
+    </div>
   );
 }
 
-// ─── SVG ICONS ──────────────────────────────────────────────────
-const UsersIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-    <circle cx="9" cy="7" r="4" />
-    <path d="M23 21v-2a4 4 0 00-3-3.87" />
-    <path d="M16 3.13a4 4 0 010 7.75" />
-  </svg>
-);
+function MetricCard({ label, value, hint, icon, accent }: { label: string; value: string; hint: string; icon: ReactNode; accent: string }) {
+  return <article className={styles.metricCard}>
+    <div className={`${styles.metricIcon} ${styles[`accent_${accent}`]}`}>{icon}</div>
+    <div className={styles.metricText}><span>{label}</span><strong>{value}</strong><small>{hint}</small></div>
+  </article>;
+}
 
-const PackageIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="7" width="20" height="14" rx="2" />
-    <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16" />
-  </svg>
-);
+function EmptyState({ text }: { text: string }) {
+  return <div className={styles.emptyState}><span className={styles.emptyMark}><CheckIcon /></span><p>{text}</p></div>;
+}
 
-const FileTextIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-    <polyline points="14 2 14 8 20 8" />
-    <line x1="16" y1="13" x2="8" y2="13" />
-    <line x1="16" y1="17" x2="8" y2="17" />
-  </svg>
-);
-
-const TrendingUpIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-    <polyline points="17 6 23 6 23 12" />
-  </svg>
-);
-
-const RefreshIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="23 4 23 10 17 10" />
-    <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
-  </svg>
-);
-
-const BuildingIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="7" width="20" height="14" rx="2" />
-    <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16" />
-  </svg>
-);
-
-const styles = {
-  loading: {
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column" as const,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 16,
-    fontFamily: "'Plus Jakarta Sans', sans-serif",
-    background: "#f5f7fa",
-    color: "#64748b",
-  },
-  spinner: {
-    width: 32,
-    height: 32,
-    border: "3px solid #e2e8f0",
-    borderTopColor: "#2563eb",
-    borderRadius: "50%",
-    animation: "spin 0.8s linear infinite",
-  },
-};
+function Icon({ children }: { children: ReactNode }) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>;
+}
+const UsersIcon = () => <Icon><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></Icon>;
+const BuildingIcon = () => <Icon><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 21V9h6v12M7 7h.01M17 7h.01M7 11h.01M17 11h.01"/></Icon>;
+const BoxIcon = () => <Icon><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="M3 8v9l9 5 9-5V8M12 13v9"/></Icon>;
+const WalletIcon = () => <Icon><rect x="3" y="5" width="18" height="15" rx="2"/><path d="M3 8h18M16 14h2M6 5V4a2 2 0 0 1 2-2h10"/></Icon>;
+const FlagIcon = () => <Icon><path d="M5 21V5m0 0c5-4 9 4 14 0v11c-5 4-9-4-14 0"/></Icon>;
+const TrendIcon = () => <Icon><path d="m3 17 6-6 4 4 8-9"/><path d="M15 6h6v6"/></Icon>;
+const ArrowIcon = () => <Icon><path d="M5 12h14m-6-6 6 6-6 6"/></Icon>;
+const BugIcon = () => <Icon><path d="m8 8-2-2m10 2 2-2M9 3l1.5 3m4-3L13 6M3 13h3m12 0h3M5 19l2-2m10 0 2 2"/><rect x="7" y="7" width="10" height="14" rx="5"/><path d="M12 8v12m-5-8h5m5 0h-5m-5 4h5m5 0h-5"/></Icon>;
+const SparkIcon = () => <Icon><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15ZM5 3l.7 1.3L7 5l-1.3.7L5 7l-.7-1.3L3 5l1.3-.7L5 3Z"/></Icon>;
+const ChatIcon = () => <Icon><path d="M21 11.5a8.5 8.5 0 0 1-12.9 7.3L3 20l1.2-4.4A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8 11h8m-8 4h5"/></Icon>;
+const CheckIcon = () => <Icon><path d="m5 12 4 4L19 6"/></Icon>;

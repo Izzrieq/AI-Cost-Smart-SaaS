@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import BottomNavbar from "@/app/(user)/components/BottomNavbar";
 import { API_URL } from "@/lib/api";
+import { BATCHES_PER_MONTH } from "@/lib/costModel";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -12,6 +13,8 @@ interface Product {
   name: string;
   selling_price: number;
   image_url: string | null;
+  mode?: "regular" | "dropship";
+  batch_size?: number;
 }
 
 interface Cost {
@@ -37,7 +40,7 @@ interface ProductCVP {
   tenaga_total: number;
   overhead_total: number;
   total_variable_cost: number;
-  total_batch_cost: number;  // variable costs only (NO fixed costs here)
+  total_monthly_variable_cost: number;
   units_produced: number;
 
   // Single Product CVP
@@ -48,7 +51,7 @@ interface ProductCVP {
   net_profit_margin_pct: number;
   bep_units_single: number;
   min_selling_price: number;    // variable_cost_per_unit only
-  net_profit_batch: number;
+  net_profit_month: number;
 
   // Multiple Product CVP
   sales_mix_pct: number;
@@ -67,6 +70,7 @@ const IconTrend      = () => <svg width="14" height="14" viewBox="0 0 24 24" fil
 const IconEmpty      = () => <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>;
 const IconTarget     = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>;
 const IconShield     = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>;
+
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -103,7 +107,7 @@ const calcMultiCVP = (products: ProductCVP[], totalFixedCost: number) => {
     const bep_units_multi = bep_total_units === Infinity ? Infinity : bep_total_units * (sales_mix_pct / 100);
     // Recalculate net profit with shared fixed costs allocated by sales mix
     const allocated_fixed = totalFixedCost * (sales_mix_pct / 100);
-    const net_profit_batch = p.cm_per_unit * p.units_produced - allocated_fixed;
+    const net_profit_month = p.cm_per_unit * p.units_produced - allocated_fixed;
     const total_cost_per_unit = p.variable_cost_per_unit + (allocated_fixed / p.units_produced);
     const net_profit_margin_pct = p.selling_price > 0 ? ((p.selling_price - total_cost_per_unit) / p.selling_price) * 100 : 0;
     
@@ -112,7 +116,7 @@ const calcMultiCVP = (products: ProductCVP[], totalFixedCost: number) => {
       sales_mix_pct, 
       weighted_cm, 
       bep_units_multi,
-      net_profit_batch,
+      net_profit_month,
       total_cost_per_unit,
       net_profit_margin_pct
     };
@@ -176,9 +180,10 @@ export default function AnalisisPage() {
         
         // STEP 2: Now calculate each product's VARIABLE costs only
         const cvpArr: ProductCVP[] = productData.map(({ p, costs, productions }) => {
-          const units_produced = productions.length > 0
+          const unitsPerBatch = productions.length > 0
             ? Math.max(...productions.map(pr => Number(pr.units_produced) || 0).filter(n => n > 0), 0) || 1
-            : 1;
+            : Math.max(Number(p.batch_size) || 0, 1);
+          const units_produced = unitsPerBatch * BATCHES_PER_MONTH;
 
           // Bahan = always variable
           const bahan_total = productions.reduce((s, pr) => s + parseFloat(String(pr.total_cost ?? 0)), 0);
@@ -187,8 +192,11 @@ export default function AnalisisPage() {
           const overhead_total = costs.filter(c => c.type === "indirect" && c.behavior === "variable").reduce((s, c) => s + parseFloat(String(c.total_cost ?? 0)), 0);
 
           // Only VARIABLE costs for this product
-          const total_variable_cost = bahan_total + tenaga_total + overhead_total;
-          const total_batch_cost = total_variable_cost;  // Fixed costs are separate!
+          const monthlyBahanTotal = bahan_total * BATCHES_PER_MONTH;
+          const monthlyTenagaTotal = tenaga_total * BATCHES_PER_MONTH;
+          const monthlyOverheadTotal = overhead_total * BATCHES_PER_MONTH;
+          const total_variable_cost = monthlyBahanTotal + monthlyTenagaTotal + monthlyOverheadTotal;
+          const total_monthly_variable_cost = total_variable_cost;
 
           const sp                   = parseFloat(String(p.selling_price));
           const variable_cost_per_unit = units_produced > 0 ? total_variable_cost / units_produced : 0;
@@ -198,18 +206,18 @@ export default function AnalisisPage() {
           
           // Initial net profit margin (without fixed costs - will be recalculated later)
           const net_profit_margin_pct = 0;
-          const net_profit_batch = 0;
+          const net_profit_month = 0;
           const total_cost_per_unit = variable_cost_per_unit;
 
           return {
             product_id: p.product_id,
             name: p.name,
             selling_price: sp,
-            bahan_total,
-            tenaga_total,
-            overhead_total,
+            bahan_total: monthlyBahanTotal,
+            tenaga_total: monthlyTenagaTotal,
+            overhead_total: monthlyOverheadTotal,
             total_variable_cost,
-            total_batch_cost,
+            total_monthly_variable_cost,
             units_produced,
             variable_cost_per_unit,
             total_cost_per_unit,
@@ -218,7 +226,7 @@ export default function AnalisisPage() {
             net_profit_margin_pct,
             bep_units_single: 0,  // Will be calculated in multi CVP
             min_selling_price,
-            net_profit_batch,
+            net_profit_month,
             sales_mix_pct:   0,
             weighted_cm:     0,
             bep_units_multi: 0,
@@ -252,8 +260,8 @@ export default function AnalisisPage() {
   const maxMargin      = Math.max(...enriched.map(p => p.net_profit_margin_pct), 1);
 
   // Pie chart for selected product
-  const pie = selectedProduct && selectedProduct.total_batch_cost > 0 ? (() => {
-    const total    = selectedProduct.total_batch_cost;
+  const pie = selectedProduct && selectedProduct.total_monthly_variable_cost > 0 ? (() => {
+    const total    = selectedProduct.total_monthly_variable_cost;
     const segments = [
       { label: "Bahan",   value: selectedProduct.bahan_total,   color: "#3b82f6" },
       { label: "Tenaga",  value: selectedProduct.tenaga_total,  color: "#6366f1" },
@@ -492,7 +500,7 @@ export default function AnalisisPage() {
               <div className="an-multi-card" style={{ animationDelay:"0.05s" }}>
                 <div className="an-multi-title">CVP Pelbagai Produk (Kongsi Kos Tetap)</div>
                 <div className="an-multi-sub">
-                  Jumlah {multi.total_units} unit dari {enriched.length} produk · Kos tetap dikongsi
+                  Jumlah {multi.total_units} unit sebulan dari {enriched.length} produk · Kos tetap dikongsi
                 </div>
                 <div className="an-multi-grid">
                   <div className="an-multi-kpi highlight">
@@ -501,21 +509,36 @@ export default function AnalisisPage() {
                     <div className="an-multi-kpi-sub">Σ (CM/unit × sales mix%)</div>
                   </div>
                   <div className="an-multi-kpi highlight">
-                    <div className="an-multi-kpi-label">BEP Gabungan (unit)</div>
+                    <div className="an-multi-kpi-label">BEP Gabungan (unit/bulan)</div>
                     <div className="an-multi-kpi-val">
                       {multi.bep_total_units === Infinity ? "∞" : Math.ceil(multi.bep_total_units)}
                     </div>
                     <div className="an-multi-kpi-sub">Jumlah FC ÷ WACM</div>
                   </div>
                   <div className="an-multi-kpi">
-                    <div className="an-multi-kpi-label">Jumlah Kos Tetap (Dikongsi)</div>
+                    <div className="an-multi-kpi-label">Jumlah Kos Tetap Dikongsi / Bulan</div>
                     <div className="an-multi-kpi-val">RM {multi.totalFixedCost.toFixed(0)}</div>
                     <div className="an-multi-kpi-sub">SEKALI untuk SEMUA produk</div>
                   </div>
                   <div className="an-multi-kpi">
                     <div className="an-multi-kpi-label">Hasil Jualan (kapasiti)</div>
                     <div className="an-multi-kpi-val">RM {multi.total_revenue.toFixed(0)}</div>
-                    <div className="an-multi-kpi-sub">SP × unit per produk</div>
+                    <div className="an-multi-kpi-sub">SP × jualan bulanan per produk</div>
+                  </div>
+                  <div className="an-multi-kpi">
+                    <div className="an-multi-kpi-label">Jumlah Kos Berubah / Bulan</div>
+                    <div className="an-multi-kpi-val">RM {multi.total_vc.toFixed(0)}</div>
+                    <div className="an-multi-kpi-sub">4 batch untuk setiap produk</div>
+                  </div>
+                  <div className="an-multi-kpi">
+                    <div className="an-multi-kpi-label">Jumlah Sumbangan / Bulan</div>
+                    <div className="an-multi-kpi-val">RM {(multi.total_revenue - multi.total_vc).toFixed(0)}</div>
+                    <div className="an-multi-kpi-sub">Jualan − kos berubah</div>
+                  </div>
+                  <div className="an-multi-kpi highlight">
+                    <div className="an-multi-kpi-label">Anggaran Untung Operasi / Bulan</div>
+                    <div className="an-multi-kpi-val">RM {(multi.total_revenue - multi.total_vc - multi.totalFixedCost).toFixed(0)}</div>
+                    <div className="an-multi-kpi-sub">Sumbangan − kos tetap bulanan</div>
                   </div>
                 </div>
 
@@ -530,7 +553,7 @@ export default function AnalisisPage() {
                       <span>
                         Mix: {p.sales_mix_pct.toFixed(1)}% ·
                         CM: RM {p.cm_per_unit.toFixed(2)} ·
-                        BEP: {p.bep_units_multi === Infinity ? "∞" : Math.ceil(p.bep_units_multi)} unit
+                        BEP: {p.bep_units_multi === Infinity ? "∞" : Math.ceil(p.bep_units_multi)} unit/bulan
                       </span>
                     </div>
                   ))}
@@ -586,9 +609,9 @@ export default function AnalisisPage() {
                         <div className="an-bar-fill" style={{ width:`${barWidth}%`, background:meta.bar }} />
                       </div>
                       <div className="an-bar-meta">
-                        {p.total_batch_cost > 0 ? (
+                        {p.total_monthly_variable_cost > 0 ? (
                           <>
-                            <span className="an-bar-meta-text">Kos berubah batch: RM {p.total_batch_cost.toFixed(2)}</span>
+                            <span className="an-bar-meta-text">Kos berubah sebulan: RM {p.total_monthly_variable_cost.toFixed(2)}</span>
                             <span className="an-bar-meta-text">Jual: RM {p.selling_price.toFixed(2)}/unit</span>
                           </>
                         ) : (
@@ -643,7 +666,7 @@ export default function AnalisisPage() {
                     </div>
                   </div>
 
-                  {selectedProduct.total_batch_cost === 0 ? (
+                  {selectedProduct.total_monthly_variable_cost === 0 ? (
                     <div className="an-no-data">Belum ada data kos untuk produk ini.<br/>Klik butang di bawah untuk tambah kos.</div>
                   ) : (
                     <>
@@ -674,7 +697,7 @@ export default function AnalisisPage() {
                             <circle cx="80" cy="80" r="36" fill="white" />
                             <text x="80" y="74" textAnchor="middle" fontSize="8" fill="#94a3b8" fontWeight="700" fontFamily="Plus Jakarta Sans, sans-serif">KOS BERUBAH</text>
                             <text x="80" y="90" textAnchor="middle" fontSize="11" fill="#1e293b" fontWeight="800" fontFamily="Plus Jakarta Sans, sans-serif">
-                              RM {selectedProduct.total_batch_cost.toFixed(0)}
+                              RM {selectedProduct.total_monthly_variable_cost.toFixed(0)}
                             </text>
                           </svg>
                         </div>
@@ -684,7 +707,7 @@ export default function AnalisisPage() {
                             { label:"Tenaga (Berubah)", value:selectedProduct.tenaga_total, color:"#6366f1", textColor:"#4338ca" },
                             { label:"Overhead (Berubah)", value:selectedProduct.overhead_total, color:"#f59e0b", textColor:"#b45309" },
                           ].map(item => {
-                            const pct = selectedProduct.total_batch_cost > 0 ? ((item.value / selectedProduct.total_batch_cost) * 100).toFixed(1) : "0";
+                            const pct = selectedProduct.total_monthly_variable_cost > 0 ? ((item.value / selectedProduct.total_monthly_variable_cost) * 100).toFixed(1) : "0";
                             return (
                               <div key={item.label}>
                                 <div className="an-legend-item-label">
@@ -695,7 +718,7 @@ export default function AnalisisPage() {
                                   <span className="an-legend-val" style={{ color:item.textColor }}>RM {item.value.toFixed(2)}</span>
                                 </div>
                                 <div className="an-legend-bar-track">
-                                  <div className="an-legend-bar-fill" style={{ width:`${selectedProduct.total_batch_cost > 0 ? (item.value / selectedProduct.total_batch_cost) * 100 : 0}%`, background:item.color }} />
+                                  <div className="an-legend-bar-fill" style={{ width:`${selectedProduct.total_monthly_variable_cost > 0 ? (item.value / selectedProduct.total_monthly_variable_cost) * 100 : 0}%`, background:item.color }} />
                                 </div>
                                 <span className="an-legend-pct">{pct}%</span>
                               </div>
@@ -758,7 +781,7 @@ export default function AnalisisPage() {
                           <div className="an-kpi-sub">CM/unit × sales mix%</div>
                         </div>
                         <div className="an-kpi purple">
-                          <div className="an-kpi-label">BEP (Pelbagai Produk)</div>
+                          <div className="an-kpi-label">BEP Bulanan (Pelbagai Produk)</div>
                           <div className="an-kpi-val">
                             {selectedProduct.bep_units_multi === Infinity ? "∞" : Math.ceil(selectedProduct.bep_units_multi)} unit
                           </div>
@@ -791,7 +814,7 @@ export default function AnalisisPage() {
                             <div className="an-bep-kpi-val">
                               {selectedProduct.bep_units_multi === Infinity ? "∞" : Math.ceil(selectedProduct.bep_units_multi)} unit
                             </div>
-                            <div className="an-bep-kpi-sub">dari {selectedProduct.units_produced} unit batch</div>
+                            <div className="an-bep-kpi-sub">daripada {selectedProduct.units_produced} unit sebulan</div>
                           </div>
                           <div className="an-bep-kpi">
                             <div className="an-bep-kpi-label">Hasil Jualan BEP</div>
@@ -807,7 +830,7 @@ export default function AnalisisPage() {
                             <div className="an-bep-kpi-sub">kos berubah + kos tetap diagih</div>
                           </div>
                           <div className="an-bep-kpi">
-                            <div className="an-bep-kpi-label">Kos Tetap Diagih</div>
+                            <div className="an-bep-kpi-label">Kos Tetap Diagih / Bulan</div>
                             <div className="an-bep-kpi-val" style={{ fontSize:13 }}>RM {((multi.totalFixedCost * (selectedProduct.sales_mix_pct / 100))).toFixed(2)}</div>
                             <div className="an-bep-kpi-sub">ikut nisbah {selectedProduct.sales_mix_pct.toFixed(1)}%</div>
                           </div>
@@ -873,11 +896,11 @@ export default function AnalisisPage() {
                         </div>
                         <div className="an-cost-divider" />
                         <div className="an-cost-row">
-                          <span className="an-cost-label" style={{ fontWeight:700, color:"#1e293b" }}>Total Kos Berubah Batch</span>
-                          <span className="an-cost-val" style={{ fontSize:14 }}>RM {selectedProduct.total_batch_cost.toFixed(2)}</span>
+                          <span className="an-cost-label" style={{ fontWeight:700, color:"#1e293b" }}>Total Kos Berubah Sebulan</span>
+                          <span className="an-cost-val" style={{ fontSize:14 }}>RM {selectedProduct.total_monthly_variable_cost.toFixed(2)}</span>
                         </div>
                         <div className="an-cost-row">
-                          <span className="an-cost-label" style={{ fontWeight:600 }}>Kos Tetap (Diagih)</span>
+                          <span className="an-cost-label" style={{ fontWeight:600 }}>Kos Tetap Diagih Sebulan</span>
                           <span className="an-cost-val" style={{ color:"#dc2626" }}>RM {((multi.totalFixedCost * (selectedProduct.sales_mix_pct / 100))).toFixed(2)}</span>
                         </div>
                         <div className="an-cost-divider" />
@@ -906,9 +929,9 @@ export default function AnalisisPage() {
                             </div>
                             <div>
                               <div className="an-status-title">
-                                {selectedProduct.net_profit_batch >= 0
-                                  ? `Untung batch: RM ${selectedProduct.net_profit_batch.toFixed(2)} (selepas kos tetap dikongsi)`
-                                  : `Rugi batch: RM ${Math.abs(selectedProduct.net_profit_batch).toFixed(2)} (selepas kos tetap dikongsi)`}
+                                {selectedProduct.net_profit_month >= 0
+                                  ? `Untung sebulan: RM ${selectedProduct.net_profit_month.toFixed(2)} (selepas kos tetap dikongsi)`
+                                  : `Rugi sebulan: RM ${Math.abs(selectedProduct.net_profit_month).toFixed(2)} (selepas kos tetap dikongsi)`}
                               </div>
                               <div className="an-status-desc">
                                 {meta.label === "Sihat"
@@ -924,7 +947,7 @@ export default function AnalisisPage() {
                     </>
                   )}
 
-                  <button className="an-cta-btn" style={{ marginTop: selectedProduct.total_batch_cost === 0 ? 14 : 10 }} onClick={() => router.push(`/produk/${selectedProduct.product_id}`)}>
+                  <button className="an-cta-btn" style={{ marginTop: selectedProduct.total_monthly_variable_cost === 0 ? 14 : 10 }} onClick={() => router.push(`/produk/${selectedProduct.product_id}`)}>
                     <IconChart />
                     Edit Kos Produk
                     <IconArrowRight />

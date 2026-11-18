@@ -2114,33 +2114,64 @@ app.put(
   },
 );
 
-// ─── Get All Users (Super Admin only) ─────────────────────────
-app.get("/admin/users", authenticateToken, isSuperAdmin, async (req, res) => {
+// ─── Get All Users (Admin & Super Admin) ─────────────────────
+app.get("/admin/users", authenticateToken, isAdminOrSuper, async (req, res) => {
   try {
-    const { limit = 50, offset = 0, search = "" } = req.query;
+    const { page = 1, limit = 10, offset, search = "", role = "" } = req.query;
 
-    let query = `
-      SELECT user_id, name, email, role, provider, created_at, business_id 
-      FROM users WHERE 1=1
-    `;
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 10));
+    const offsetNum =
+      offset !== undefined
+        ? Math.max(0, parseInt(offset) || 0)
+        : (pageNum - 1) * limitNum;
+
+    const where = ["1=1"];
     const params = [];
     let idx = 1;
 
     if (search) {
-      query += ` AND (name ILIKE $${idx} OR email ILIKE $${idx})`;
+      where.push(`(u.name ILIKE $${idx} OR u.email ILIKE $${idx})`);
       params.push(`%${search}%`);
       idx++;
     }
+    if (role) {
+      where.push(`u.role = $${idx}`);
+      params.push(role);
+      idx++;
+    }
+    const whereSql = where.join(" AND ");
 
-    query += ` ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
-    params.push(parseInt(limit), parseInt(offset));
+    const [dataResult, countResult, roleCountsResult] = await Promise.all([
+      pool.query(
+        `SELECT u.user_id, u.name, u.email, u.role, u.provider,
+                u.created_at, u.business_id, b.name AS business_name
+         FROM users u
+         LEFT JOIN business b ON b.user_id = u.user_id
+         WHERE ${whereSql}
+         ORDER BY u.created_at DESC
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, limitNum, offsetNum],
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS total FROM users u WHERE ${whereSql}`,
+        params,
+      ),
+      pool.query(
+        `SELECT role, COUNT(*)::int AS count FROM users GROUP BY role ORDER BY count DESC`,
+      ),
+    ]);
 
-    const result = await pool.query(query, params);
-    const countResult = await pool.query("SELECT COUNT(*) as count FROM users");
-
+    const total = countResult.rows[0].total;
     res.json({
-      users: result.rows,
-      total: parseInt(countResult.rows[0].count),
+      users: dataResult.rows,
+      roleCounts: roleCountsResult.rows,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limitNum)),
+      },
     });
   } catch (err) {
     console.error("GET USERS ERROR:", err);
@@ -2148,51 +2179,59 @@ app.get("/admin/users", authenticateToken, isSuperAdmin, async (req, res) => {
   }
 });
 
-// ─── Update User Role (Super Admin only) ──────────────────────
-app.put(
-  "/admin/users/:user_id/role",
+// ─── Update User (Admin & Super Admin) ───────────────────────
+app.patch(
+  "/admin/users/:user_id",
   authenticateToken,
-  isSuperAdmin,
+  isAdminOrSuper,
   async (req, res) => {
     try {
       const { user_id } = req.params;
-      const { role } = req.body;
+      const { name, role } = req.body;
 
       const validRoles = ["user", "staff", "business_owner", "admin"];
-      if (!validRoles.includes(role)) {
+      if (role && !validRoles.includes(role)) {
         return res.status(400).json({ message: "Peranan tidak sah." });
       }
 
-      if (user_id === req.user.user_id && role !== "super_admin") {
-        return res
-          .status(400)
-          .json({ message: "Anda tidak boleh menukar peranan sendiri." });
-      }
-
-      const checkResult = await pool.query(
+      const check = await pool.query(
         "SELECT role FROM users WHERE user_id = $1",
         [user_id],
       );
-      if (checkResult.rows.length === 0) {
+      if (check.rows.length === 0)
         return res.status(404).json({ message: "Pengguna tidak dijumpai." });
-      }
-      if (checkResult.rows[0].role === "super_admin") {
+
+      // Nobody (even super_admin) can edit another super_admin's role
+      if (check.rows[0].role === "super_admin" && role) {
         return res
           .status(403)
           .json({ message: "Tidak boleh menukar peranan Super Admin." });
       }
 
+      const updates = [];
+      const params = [];
+      let idx = 1;
+      if (name) {
+        updates.push(`name = $${idx++}`);
+        params.push(name);
+      }
+      if (role) {
+        updates.push(`role = $${idx++}`);
+        params.push(role);
+      }
+      if (updates.length === 0)
+        return res.status(400).json({ message: "Tiada perubahan." });
+
+      params.push(user_id);
       const result = await pool.query(
-        "UPDATE users SET role = $1 WHERE user_id = $2 RETURNING user_id, name, email, role",
-        [role, user_id],
+        `UPDATE users SET ${updates.join(", ")} WHERE user_id = $${idx}
+         RETURNING user_id, name, email, role`,
+        params,
       );
 
-      res.json({
-        message: "Peranan pengguna berjaya dikemaskini.",
-        user: result.rows[0],
-      });
+      res.json({ message: "Pengguna dikemaskini.", user: result.rows[0] });
     } catch (err) {
-      console.error("UPDATE USER ROLE ERROR:", err);
+      console.error("UPDATE USER ERROR:", err);
       res.status(500).json({ message: "Server error." });
     }
   },
@@ -2379,6 +2418,175 @@ app.get(
       });
     } catch (err) {
       console.error("SYSTEM STATS ERROR:", err);
+      res.status(500).json({ message: "Server error." });
+    }
+  },
+);
+
+// ─── Product Demand Analytics (Admin & Super Admin) ──────────
+app.get(
+  "/admin/product-demand",
+  authenticateToken,
+  isAdminOrSuper,
+  async (req, res) => {
+    try {
+      // Group by lowercased, trimmed product name
+      const groupedResult = await pool.query(
+        `SELECT
+           LOWER(TRIM(p.name)) AS key,
+           MIN(p.name)          AS display_name,
+           COUNT(DISTINCT p.business_id) AS business_count,
+           COUNT(*)             AS product_count,
+           ROUND(AVG(p.margin_percentage)::numeric, 1) AS avg_margin,
+           ROUND(AVG(p.selling_price)::numeric, 2)     AS avg_price,
+           MAX(p.created_at)    AS last_added
+         FROM products p
+         GROUP BY LOWER(TRIM(p.name))
+         ORDER BY business_count DESC, product_count DESC
+         LIMIT 100`,
+      );
+
+      const totals = await pool.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM products) AS total_products,
+           (SELECT COUNT(DISTINCT business_id)::int FROM products) AS total_businesses,
+           (SELECT COUNT(DISTINCT LOWER(TRIM(name)))::int FROM products) AS unique_names`,
+      );
+
+      res.json({
+        totals: totals.rows[0],
+        products: groupedResult.rows.map((r) => ({
+          key: r.key,
+          name: r.display_name,
+          businessCount: Number(r.business_count),
+          productCount: Number(r.product_count),
+          avgMargin: Number(r.avg_margin),
+          avgPrice: Number(r.avg_price),
+          lastAdded: r.last_added,
+        })),
+      });
+    } catch (err) {
+      console.error("PRODUCT DEMAND ERROR:", err);
+      res.status(500).json({ message: "Server error." });
+    }
+  },
+);
+
+// ─── Report Detail with Timeline (Admin & Super Admin) ───────
+
+// ─── Platform Analytics (Admin & Super Admin) ────────────────
+app.get(
+  "/admin/analytics",
+  authenticateToken,
+  isAdminOrSuper,
+  async (req, res) => {
+    try {
+      const days = Math.min(90, Math.max(7, parseInt(req.query.days) || 30));
+
+      // Growth over time: users, businesses, products, reports per day
+      const growth = await pool.query(
+        `WITH series AS (
+           SELECT generate_series(
+             (CURRENT_DATE - INTERVAL '${days - 1} days'),
+             CURRENT_DATE,
+             INTERVAL '1 day'
+           )::date AS day
+         )
+         SELECT
+           s.day,
+           COALESCE((SELECT COUNT(*)::int FROM users   WHERE created_at::date = s.day), 0) AS users,
+           COALESCE((SELECT COUNT(*)::int FROM business WHERE created_at::date = s.day), 0) AS businesses,
+           COALESCE((SELECT COUNT(*)::int FROM products WHERE created_at::date = s.day), 0) AS products,
+           COALESCE((SELECT COUNT(*)::int FROM reports  WHERE created_at::date = s.day), 0) AS reports
+         FROM series s
+         ORDER BY s.day ASC`,
+      );
+
+      // Top businesses by product count + total cost
+      const topBusinesses = await pool.query(
+        `SELECT
+           b.business_id, b.name AS business_name, b.type,
+           u.name AS owner_name,
+           (SELECT COUNT(*)::int FROM products p WHERE p.business_id = b.business_id) AS product_count,
+           (SELECT COALESCE(SUM(c.total_cost), 0)::numeric FROM costs c WHERE c.business_id = b.business_id) AS total_cost,
+           (SELECT COALESCE(ROUND(AVG(p.margin_percentage)::numeric, 1), 0) FROM products p WHERE p.business_id = b.business_id) AS avg_margin
+         FROM business b
+         LEFT JOIN users u ON b.user_id = u.user_id
+         ORDER BY product_count DESC, total_cost DESC
+         LIMIT 10`,
+      );
+
+      // Cost type split
+      const costSplit = await pool.query(
+        `SELECT type, COALESCE(SUM(total_cost), 0)::numeric AS total
+         FROM costs GROUP BY type ORDER BY total DESC`,
+      );
+
+      // Role distribution
+      const roleDist = await pool.query(
+        `SELECT role, COUNT(*)::int AS count FROM users GROUP BY role ORDER BY count DESC`,
+      );
+
+      // Business type distribution
+      const bizTypeDist = await pool.query(
+        `SELECT type, COUNT(*)::int AS count FROM business GROUP BY type ORDER BY count DESC`,
+      );
+
+      // Margin bands
+      const marginBands = await pool.query(
+        `SELECT
+           CASE
+             WHEN margin_percentage IS NULL OR margin_percentage = 0 THEN '0-20%'
+             WHEN margin_percentage < 20 THEN '0-20%'
+             WHEN margin_percentage < 40 THEN '20-40%'
+             WHEN margin_percentage < 60 THEN '40-60%'
+             WHEN margin_percentage < 80 THEN '60-80%'
+             ELSE '80-100%'
+           END AS band,
+           COUNT(*)::int AS count
+         FROM products GROUP BY band`,
+      );
+
+      // Report status snapshot
+      const reportStats = await pool.query(
+        `SELECT status, COUNT(*)::int AS count FROM reports GROUP BY status`,
+      );
+
+      // Aggregated totals
+      const totals = await pool.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM users) AS total_users,
+           (SELECT COUNT(*)::int FROM business) AS total_businesses,
+           (SELECT COUNT(*)::int FROM products) AS total_products,
+           (SELECT COALESCE(SUM(total_cost), 0)::numeric FROM costs) AS total_cost,
+           (SELECT COALESCE(ROUND(AVG(margin_percentage)::numeric, 1), 0) FROM products) AS avg_margin,
+           (SELECT COUNT(*)::int FROM reports) AS total_reports,
+           (SELECT COUNT(*)::int FROM reports WHERE status IN ('pending','reviewing')) AS open_reports`,
+      );
+
+      res.json({
+        days,
+        growth: growth.rows,
+        topBusinesses: topBusinesses.rows.map((r) => ({
+          ...r,
+          product_count: Number(r.product_count),
+          total_cost: Number(r.total_cost),
+          avg_margin: Number(r.avg_margin),
+        })),
+        costSplit: costSplit.rows.map((r) => ({
+          type: r.type,
+          total: Number(r.total),
+        })),
+        roleDist: roleDist.rows,
+        bizTypeDist: bizTypeDist.rows,
+        marginBands: marginBands.rows,
+        reportStats: reportStats.rows,
+        totals: Object.fromEntries(
+          Object.entries(totals.rows[0]).map(([k, v]) => [k, Number(v)]),
+        ),
+      });
+    } catch (err) {
+      console.error("ANALYTICS ERROR:", err);
       res.status(500).json({ message: "Server error." });
     }
   },

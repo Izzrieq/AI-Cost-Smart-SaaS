@@ -35,7 +35,7 @@ export function useAuth() {
 
       // Redirect after a short delay
       setTimeout(() => {
-        if (user.role === "admin") router.push("/dashboard");
+        if (user.role === "admin" || user.role === "super_admin") router.push("/admin/dashboard");
         else if (user.role === "staff") router.push("/staff-dashboard");
         else router.push("/home");
       }, 500);
@@ -62,7 +62,7 @@ export function useAuth() {
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(user));
       toast.success("Google login successful");
-      router.push(user.role === "admin" ? "/dashboard" : "/home");
+      router.push(user.role === "admin" || user.role === "super_admin" ? "/admin/dashboard" : "/home");
     } catch (err: unknown) {
       console.error(err);
       if (typeof err === "object" && err !== null && "code" in err) {
